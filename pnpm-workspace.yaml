@@ -1,0 +1,5 @@
+# pnpm 10 stopped reading settings from package.json's "pnpm" field — this is
+# where `onlyBuiltDependencies` now lives. Left in package.json it is inert, and
+# esbuild's postinstall silently never runs.
+onlyBuiltDependencies:
+  - esbuild

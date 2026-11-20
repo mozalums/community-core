@@ -1,0 +1,15 @@
+/* System fonts only, so this skin ships no font file. docs/skin.md lists
+   every property. */
+:root {
+	--color-accent: #4338ca;
+	--color-accent-contrast: #ffffff;
+	--color-link: #4338ca;
+	--font-sans: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	--font-serif: Georgia, 'Times New Roman', serif;
+}
+
+.dark {
+	--color-accent: #a5b4fc;
+	--color-accent-contrast: #000000;
+	--color-link: #a5b4fc;
+}

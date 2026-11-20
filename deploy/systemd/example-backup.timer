@@ -1,0 +1,26 @@
+# Daily, not hourly and not weekly. The roster changes on the order of a few
+# edits a week: hourly would be 24 copies a day of a directory that changed
+# once, and each copy is a full copy of every member's postal address, so the
+# cost is privacy exposure as much as storage. Weekly loses a week of avatar
+# uploads, stars and admin-edited markdown, none of which exists anywhere else.
+# The window this leaves is up to 24 hours. See docs/operations.md, "What is
+# still unprotected".
+
+[Unit]
+Description=Daily community Postgres backup
+Documentation=file:///srv/community/www/docs/operations.md
+
+[Timer]
+# 03:15 UTC: after the daily low point in traffic, and clear of certbot's
+# renewal timer, which runs twice a day on this host.
+OnCalendar=*-*-* 03:15:00 UTC
+# Spreads the load off the exact minute, so a box hosting several timers does
+# not start all of them together.
+RandomizedDelaySec=900
+# A box that was powered off at 03:15 runs the backup when it comes back rather
+# than skipping the day. Without this, a host that reboots nightly for patching
+# can go weeks with no dump and nothing but the absence alert to say so.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

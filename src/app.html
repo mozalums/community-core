@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+		<link rel="icon" href="%sveltekit.assets%/favicon.ico" sizes="32x32" />
+		<link rel="apple-touch-icon" href="%sveltekit.assets%/apple-touch-icon.png" />
+		%sveltekit.head%
+		<!-- Apply the theme before first paint (no flash): manual choice in
+		     localStorage wins; otherwise follow the OS. Mirrors ThemeToggle.svelte,
+		     browser theme color included. It sits below the head so the skin's
+		     stylesheet and the theme-color meta exist when it reads and writes them. -->
+		<!-- The nonce is what keeps this script running under the CSP in
+		     svelte.config.js; SvelteKit substitutes a fresh one per response. -->
+		<script nonce="%sveltekit.nonce%">
+			(function () {
+				try {
+					var t = localStorage.getItem('theme');
+					var dark =
+						t === 'dark' ||
+						(t !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+					var root = document.documentElement;
+					root.classList.toggle('dark', dark);
+					var accent = getComputedStyle(root).getPropertyValue('--color-accent').trim();
+					var meta = document.querySelector('meta[name="theme-color"]');
+					if (accent && meta) meta.setAttribute('content', accent);
+				} catch (e) {}
+			})();
+		</script>
+	</head>
+	<body data-sveltekit-preload-data="hover" class="bg-black text-white">
+		<div style="display: contents">%sveltekit.body%</div>
+	</body>
+</html>

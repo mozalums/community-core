@@ -1,0 +1,53 @@
+# The neutral skin core builds with when SKIN_DIR is unset. docs/skin.md
+# describes every key.
+schema: 1
+id: default
+
+site:
+  domain: example.org
+  legal_name: Example Community
+  name: Example Community
+  default_group: example
+
+mail:
+  from_name: Example Community
+  sign_in_subject: Your Example Community sign-in link
+  signature: Example Community
+
+# Paths under static/, served from the site root.
+brand:
+  wordmark: imgs/wordmark.svg
+  mark: imgs/mark.svg
+  email_logo: email/shared/logo.png
+
+# Listed in the order the profile shows them. The sign-in address is not a
+# profile field: it lives in the member row.
+fields:
+  - key: name
+    label: Name
+    type: text
+    visibility: members
+    role: name
+    column: name
+  # Country before city so the edit form's city list has a country to key off.
+  - key: country
+    label: Country
+    type: text
+    visibility: members
+    options: countries
+    required: true
+  - key: city
+    label: City
+    type: text
+    visibility: members
+    column: city
+    options: cities
+  - key: bio
+    label: Bio
+    type: longtext
+    visibility: members
+    role: bio
+  - key: phone
+    label: Phone
+    type: text
+    visibility: private

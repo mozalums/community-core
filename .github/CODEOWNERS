@@ -1,0 +1,8 @@
+# The custodians of the code that holds members' data, the deploy path and CI.
+# While core is private on GitHub's free plan this file only requests their
+# review; the guardrail workflow is what fails a pull request no maintainer in
+# MAINTAINERS approved. It becomes enforced with branch protection when core
+# turns public (docs/skin-repository.md).
+/src/lib/server/ @ravinald
+/deploy/ @ravinald
+/.github/ @ravinald

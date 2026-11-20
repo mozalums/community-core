@@ -1,0 +1,373 @@
+# The data tier lives here, so the migration step that gates a deploy has to run
+# on this network — `postgres` resolves nowhere else, and the app image carries
+# neither scripts/ nor tsx. That is the `migrate` profile at the bottom of this
+# file; the app's boot-time ensureSchema stays an idempotent backstop that logs
+# and continues. See docs/deployment.md.
+#
+# Named, because Compose otherwise derives the project from the checkout's
+# directory name — and that name is what prefixes the network and both data
+# volumes. A rename or a second checkout would silently address a different,
+# empty database.
+name: lorem-host
+
+# Pinned in `environment:` rather than left to the secrets file, which is the
+# opposite of the rule ORIGIN follows below. These three are topology, not
+# credentials: they describe where this compose file put the database, and a
+# secrets file that disagreed would point the app and the migration runner at
+# two different databases. 5432 is the in-container port — not dev's published
+# 5881, and not the 5433 default in src/lib/server/postgres-config.ts, both of
+# which exist to dodge a busy port on a developer's machine.
+# pg_dump refuses a server newer than itself, so the backup service and the
+# database must name one tag. An anchor makes that structural: a bump moves both
+# or neither, where two literals only failed on the next backup run.
+x-postgres-image: &postgres-image postgres:17.4-alpine
+
+x-postgres-target: &postgres-target
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: '5432'
+  # Decided, not defaulted. The connection is container-to-container on a bridge
+  # network on one host: it never touches a wire anyone else can read, and TLS
+  # here would authenticate a certificate we would also have to issue and rotate.
+  # B07 made this flag mean certificate verification so it could not be switched
+  # off in silence, so switching it off has to be a sentence someone wrote. What
+  # reverses it: Postgres moving off this box, to a managed provider or another
+  # server, at which point POSTGRES_SSL=true and a CA are the same deploy.
+  POSTGRES_SSL: 'false'
+
+services:
+  lorem-host:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # deploy/deploy.sh exports the commit it just checked out, so a running
+        # container names the code inside it rather than the code someone meant.
+        LOREM_BUILD_SHA: ${LOREM_BUILD_SHA:-unknown}
+      # Which skin directory is compiled into the image, relative to this file.
+      # Compose substitutes it from an --env-file, never from the shell once
+      # sudo has reset the environment. See docs/skin.md.
+      additional_contexts:
+        skin: ${SKIN_DIR:-skin/default}
+    container_name: ${COMPOSE_PROJECT_NAME:-lorem-host}
+    restart: unless-stopped
+    # The app tolerates an absent database: ensureSchema logs schema.migrate.error
+    # and the server comes up anyway. Losing the startup race would therefore
+    # produce a live site on an empty schema rather than a failure anyone notices.
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # A host may be shared. A container in the host's network
+    # namespace reaches every loopback-bound service on the box, including the
+    # ones whose authors treated a 127.0.0.1 bind as the authentication
+    # boundary. Publishing to 0.0.0.0 is that mistake pointed outward: it puts
+    # the Node process on the public interface, past every header and TLS
+    # setting the proxy applies. Loopback publishing is the only binding that
+    # leaves nginx as the sole way in.
+    ports:
+      - '${LOREM_BIND_ADDR:-127.0.0.1}:${LOREM_HOST_PORT:-5880}:5880'
+    # The app persists to Postgres and Redis and writes no files, so a scratch
+    # /tmp is the whole writable surface it needs.
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    # Where the two secrets files live is a fact about this host, not about the
+    # deployment, so it is overridable on the terms LOREM_BACKUP_DIR already sets
+    # below: deploy/deploy.sh and deploy/backup.sh read the same variable, and the
+    # default keeps a bare `docker compose` in this checkout resolving exactly
+    # where it always has.
+    env_file: ${LOREM_SECRETS_DIR:-/data/secrets/lorem-host}/.env
+    environment:
+      <<: *postgres-target
+      # Where the image keeps its skin, pinned because the secrets file may set
+      # SKIN_DIR to the host's path for the build, and env_file would otherwise
+      # hand that path to a container where it names nothing.
+      SKIN_DIR: skin
+      NODE_ENV: production
+      PORT: '5880'
+      # adapter-node defaults to 512K. Sits above the app's own 2 MB avatar
+      # check so a caller who exceeds it sees that message rather than a bare
+      # 413 from the Node server.
+      BODY_SIZE_LIMIT: '6M'
+      # Selects the RESP client in src/lib/server/redis.ts over the Upstash REST
+      # one, which takes the session store and the magic-link flow off a WAN
+      # round-trip to a third party. The UPSTASH_* pair has no place in this
+      # deployment's secrets file.
+      REDIS_URL: redis://redis:6379
+      # HOST is unset so the image default (0.0.0.0) applies. That address is
+      # the container's own namespace, not the host's, and the loopback
+      # restriction lives on the published port above. Pinning 127.0.0.1 here
+      # binds the container's private loopback, which the port mapping cannot
+      # reach, and every proxied request 502s.
+      #
+      # ORIGIN and PUBLIC_BASE_DOMAIN are deliberately absent here and live
+      # together in the env_file above:
+      #
+      #   ORIGIN=https://www.example.org
+      #   PUBLIC_BASE_DOMAIN=example.org
+      #
+      # `environment:` wins over `env_file:`, so a value pinned here cannot be
+      # corrected from the secrets file — and a second compose file built from
+      # this one would inherit the pin along with everything else. The two must
+      # always name the same deployment. ORIGIN is what adapter-node compares
+      # the browser's Origin header against: name a host the browser is not on
+      # and every form action fails with "Cross-site POST form submissions are
+      # forbidden" while page loads keep working. PUBLIC_BASE_DOMAIN is the apex
+      # the session cookie is scoped to, so it takes example.org, never
+      # www.example.org. See docs/configuration.md, Hostname.
+      #
+      # Without these the app sees nginx's loopback peer and every visitor
+      # shares one rate-limit bucket. XFF_DEPTH counts trusted proxies, right to
+      # left: 1 = nginx, with nothing in front of it. A value above the real hop
+      # count reads an entry the client wrote, which hands an attacker the key,
+      # so it rises only when a hop (CDN, upstream load balancer) really is
+      # added. Both are inert unless nginx sets the header — see
+      # deploy/nginx/example.conf.
+      ADDRESS_HEADER: X-Forwarded-For
+      XFF_DEPTH: '1'
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '5'
+
+  postgres:
+    image: *postgres-image
+    container_name: ${COMPOSE_PROJECT_NAME:-lorem-host}-postgres
+    restart: unless-stopped
+    # No `ports:` key, deliberately. The app and the migration runner reach this
+    # by service name on the compose network; publishing it even to 127.0.0.1
+    # would put the member directory on a shared host's loopback, where every
+    # other tenant's process can reach it — a smaller copy of the reason this
+    # deployment keeps its own network namespace at all.
+    #
+    # Its own env file rather than the app's. The app's carries the SMTP
+    # submission password and the session and mail keys, and a
+    # database container has no use for any of them — env_file would hand them to
+    # every process in here and to
+    # anyone who can run `docker inspect`. The cost is that user, password and
+    # database name are written twice; they fail loudly when they drift, because
+    # the app cannot authenticate against a password it does not share.
+    env_file: ${LOREM_SECRETS_DIR:-/data/secrets/lorem-host}/postgres.env
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    # `read_only: true` is skipped, not forgotten: the entrypoint chowns PGDATA,
+    # runs initdb, and writes its socket to /var/run/postgresql, so a read-only
+    # root filesystem fails on first boot. `cap_drop: [ALL]` alone fails for the
+    # same reason — these five are what the chown and the drop to the postgres
+    # user need, and everything else in Docker's default set (NET_RAW, MKNOD,
+    # SYS_CHROOT, KILL, NET_BIND_SERVICE, SETPCAP, SETFCAP, AUDIT_WRITE) goes.
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    # Holds even though the entrypoint starts as root: dropping to an
+    # unprivileged uid is not "gaining privileges", and no setuid binary in the
+    # image can hand back what cap_drop removed.
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    healthcheck:
+      # -h 127.0.0.1 on purpose. initdb runs a temporary server on the unix
+      # socket alone, so a socket probe answers "ready" while the database is
+      # still being created — the app would then win the very race depends_on
+      # exists to lose. The TCP listener appears only once the real server is up.
+      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '5'
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: ${COMPOSE_PROJECT_NAME:-lorem-host}-redis
+    restart: unless-stopped
+    # No `ports:` key, on the same terms as postgres above. Sessions and
+    # magic-link token hashes are the whole keyspace; anything that can reach
+    # this port is signed in as whoever it likes.
+    #
+    # maxmemory sits below mem_limit so pressure is resolved by Redis evicting a
+    # key rather than by the kernel's OOM killer choosing a victim on a box that
+    # also serves other people's sites. allkeys-lru rather than the default
+    # noeviction: every key here is a session or a 30-minute token, so the cost
+    # of an eviction is one person signing in again, while noeviction turns the
+    # same pressure into write errors on the authentication path.
+    command:
+      [
+        'redis-server',
+        '--appendonly',
+        'yes',
+        '--maxmemory',
+        '192mb',
+        '--maxmemory-policy',
+        'allkeys-lru'
+      ]
+    volumes:
+      - redis-data:/data
+    # `user:` is what lets this container hold no capabilities at all. The
+    # entrypoint only chowns /data and re-execs when it starts as root, and
+    # starting as redis skips that branch: the image already ships /data owned by
+    # redis, so a fresh volume inherits the right owner and root is never needed.
+    # Granting the entrypoint CHOWN/SETUID/SETGID instead survives a first boot
+    # and then fails every restart — its `find . \! -user redis` cannot descend
+    # into the 0700 appendonlydir redis itself created, so it needs DAC_OVERRIDE
+    # too, and the container ends up with four capabilities to do work that only
+    # exists because it started as root.
+    #
+    # read_only holds because /data is the volume. No password is set: nothing
+    # off this network can reach the port, and a password in a second secrets
+    # file would be one more pair of values to drift. That changes the day
+    # anything else joins this network.
+    user: redis
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '5'
+
+  # Never started by `docker compose up` — `profiles:` keeps it out of the
+  # default set. It exists because the gating migration step has nowhere else to
+  # run once Postgres publishes no port: the service name resolves only on this
+  # network, and the production image carries neither scripts/ nor tsx. The
+  # build stage of the same Dockerfile has both, off the same lockfile the app
+  # was built from, so this is the deploy's migration runner:
+  #
+  #   docker compose --profile migrate run --rm migrate
+  #
+  # It is a one-shot operator tool, so it takes no hardening beyond the memory
+  # ceiling: it runs pnpm, which writes through the image filesystem, and it
+  # exits.
+  migrate:
+    profiles:
+      - migrate
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: build
+      # The same skin the app image carries: these scripts read its fields.
+      additional_contexts:
+        skin: ${SKIN_DIR:-skin/default}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file: ${LOREM_SECRETS_DIR:-/data/secrets/lorem-host}/.env
+    environment:
+      <<: *postgres-target
+      SKIN_DIR: skin
+    # scripts/ is absent from every image stage on purpose, so the runner is
+    # mounted rather than baked; read-only, because a migration run has no
+    # business editing its own source.
+    volumes:
+      - ./scripts:/app/scripts:ro
+    command: ['pnpm', 'exec', 'tsx', 'scripts/migrate.ts']
+    mem_limit: 512m
+
+  # Audit-trail retention, on demand. The app prunes on its own timer (see
+  # docs/features.md, Audit trail), so this is the escape hatch, not the mechanism: a
+  # prune now, or one for an instance that is stopped rather than idle. Same
+  # image, mounts and env as `migrate`, and the same pruneAudit the app calls.
+  #
+  #   docker compose --profile prune run --rm prune
+  prune:
+    profiles:
+      - prune
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: build
+      # The same skin the app image carries: these scripts read its fields.
+      additional_contexts:
+        skin: ${SKIN_DIR:-skin/default}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file: ${LOREM_SECRETS_DIR:-/data/secrets/lorem-host}/.env
+    environment:
+      <<: *postgres-target
+      SKIN_DIR: skin
+    volumes:
+      - ./scripts:/app/scripts:ro
+    command: ['pnpm', 'exec', 'tsx', 'scripts/prune-audit.ts']
+    mem_limit: 512m
+
+  # The other one-shot operator container, on the same terms as `migrate` above:
+  # `profiles:` keeps it out of `docker compose up`, postgres publishes no port,
+  # and the service name resolves on this network alone. Driven by a host timer
+  # (deploy/systemd/example-backup.timer), never by anything resident. See
+  # docs/operations.md, Backups.
+  #
+  #   docker compose --profile backup run --rm -e DUMP_NAME=<file> backup
+  #
+  # The postgres image rather than the app image, through the anchor that pins it
+  # to the tag the server runs. No build stage, so unlike migrate this cannot run
+  # against a stale image.
+  backup:
+    profiles:
+      - backup
+    image: *postgres-image
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # The database's own credentials file, not the app's — same split, same
+    # reason: a dump has no use for the SMTP password.
+    env_file: ${LOREM_SECRETS_DIR:-/data/secrets/lorem-host}/postgres.env
+    # The one writable path, root-owned 0700 on the host. A dump lives here
+    # only between being written and being confirmed on the remote — see
+    # deploy/backup.sh, which reads the same variable, so the script and the
+    # container cannot disagree about where the file is.
+    volumes:
+      - ${LOREM_BACKUP_DIR:-/var/backups/lorem-host}:/dump
+    # Written to a .part name and renamed only after pg_restore --list parses it,
+    # so the host never sees a truncated dump under a name it will upload. That
+    # list is also the cheapest proof the custom format is intact: it reads the
+    # table of contents, which a half-written file does not have.
+    #
+    # No -Z: the format's default compression is deliberate and version-stable,
+    # and the largest thing in here (member_avatar.bytes, already JPEG or PNG)
+    # does not compress further whatever level is chosen.
+    command:
+      - sh
+      - -c
+      - |
+        set -eu
+        : "$${DUMP_NAME:?DUMP_NAME is required}"
+        export PGPASSWORD="$$POSTGRES_PASSWORD"
+        pg_dump -h postgres -p 5432 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" \
+          -Fc --no-owner --no-privileges -f "/dump/$$DUMP_NAME.part"
+        pg_restore --list "/dump/$$DUMP_NAME.part" >/dev/null
+        mv "/dump/$$DUMP_NAME.part" "/dump/$$DUMP_NAME"
+    mem_limit: 512m
+
+# Both data volumes are named, so `docker compose down` does not take the member
+# directory with it. postgres-data is dumped off the box daily by the `backup`
+# profile above; redis-data is not, and does not need to be. See
+# docs/operations.md, Backups.
+volumes:
+  postgres-data:
+  redis-data:

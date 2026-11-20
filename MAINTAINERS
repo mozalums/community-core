@@ -1,0 +1,3 @@
+# GitHub logins that may approve pull requests to core, one per line.
+# The guardrail reads this file from main, never from a pull request.
+ravinald

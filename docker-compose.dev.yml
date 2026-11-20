@@ -1,0 +1,55 @@
+# Backing services for local development. The app itself is not here — it runs
+# on the host under `pnpm dev`, so this file never builds the application image
+# and is never combined with docker-compose.yml, which stays production-shaped.
+#
+#   docker compose -f docker-compose.dev.yml up -d
+#
+# Deliberately not docker-compose.override.yml: a bare `docker compose up` loads
+# an override automatically, so a deploy run from a checkout would silently merge
+# these fixture credentials into the production service. An explicit -f cannot
+# happen by accident.
+#
+# Ports are published on 127.0.0.1 only. A dev directory reachable from the
+# coffee-shop LAN is a finding in its own right, and these credentials are
+# published fixtures.
+name: lorem-host-dev
+
+services:
+  postgres:
+    image: postgres:17.4-alpine
+    container_name: lorem-host-dev-postgres
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:5881:5432'
+    environment:
+      POSTGRES_DB: lorem
+      POSTGRES_USER: lorem
+      POSTGRES_PASSWORD: lorem
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U lorem -d lorem']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: lorem-host-dev-redis
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:5882:6379'
+    # Persist across restarts so a magic link survives a `docker compose restart`
+    # and an in-flight sign-in does not die with the container.
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+volumes:
+  postgres-data:
+  redis-data:

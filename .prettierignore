@@ -1,0 +1,13 @@
+# Prettier 3 already reads .gitignore, which covers docs-internal. This file
+# states the part that must never be reformatted regardless of how the
+# formatter is invoked: the dated changelogs are an append-only record, and a
+# reflow rewrites entries whose wording is the evidence of what the tree
+# genuinely looked like on that date.
+docs-internal/CHANGELOG_*.md
+
+pnpm-lock.yaml
+build/
+.svelte-kit/
+
+# Machine-local, not project source.
+.claude/

@@ -1,0 +1,20 @@
+node_modules
+/build
+/.svelte-kit
+/package
+.env
+.env.*
+!.env.example
+!.env.test
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+.DS_Store
+tmp
+.vercel/
+# BEGIN attic — managed by `attic`, do not edit between markers
+.drover.toml
+docs-internal
+docs-internal/DEPLOYING.md
+docs-internal/staging-deploy.sh
+# END attic
+deploy/deploy.env

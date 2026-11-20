@@ -1,0 +1,44 @@
+# Example backup unit; copy it with its timer and edit. Nothing resident is
+# added to the host by this: systemd is already running, the unit starts
+# deploy/backup.sh, and the box returns to exactly the process list it had.
+# `systemctl status community-backup` reads "inactive (dead)" between runs,
+# which is the state to expect.
+#
+# Install under one name for both files, because the timer starts the service
+# that shares its name. Then replace /srv/community/www below with the checkout
+# (the core directory, in a checkout that pins core as a submodule):
+#   sudo cp deploy/systemd/example-backup.service /etc/systemd/system/community-backup.service
+#   sudo cp deploy/systemd/example-backup.timer /etc/systemd/system/community-backup.timer
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now community-backup.timer
+#
+# Run it once by hand, which is also the way to prove a fresh install:
+#   sudo systemctl start community-backup.service
+#   journalctl -u community-backup -n 50
+
+[Unit]
+Description=Community Postgres dump, encrypted, off the box
+Documentation=file:///srv/community/www/docs/operations.md
+# The dump runs through the compose network, so the daemon has to be up. Wants
+# rather than Requires: a docker that is down should make this fail visibly and
+# leave the absence alert to fire, not have systemd cancel the job silently.
+After=docker.service network-online.target
+Wants=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/srv/community/www
+ExecStart=/srv/community/www/deploy/backup.sh --quiet
+# Root, and it needs to be: the secrets file is root:root 0600, the staging
+# directory is 0700, and the docker socket belongs to root on a shared host.
+User=root
+# A dump of a member directory competing with the site for IO on a box that
+# also serves other sites is a self-inflicted outage.
+Nice=10
+IOSchedulingClass=idle
+# Generous, because the ceiling that matters is "did this hang", not "was this
+# slow". A run that takes an hour has something wrong with it worth a page.
+TimeoutStartSec=3600
+
+[Install]
+WantedBy=multi-user.target

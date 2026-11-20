@@ -1,0 +1,58 @@
+{
+	"name": "lorem-host",
+	"private": true,
+	"type": "module",
+	"engines": {
+		"node": "22.x"
+	},
+	"packageManager": "pnpm@10.6.3",
+	"scripts": {
+		"dev": "vite dev",
+		"dev:web": "vite dev",
+		"build": "vite build",
+		"preview": "vite preview",
+		"start": "node build/index.js",
+		"check": "tsx scripts/check-node-pin.ts && tsx scripts/check-neutral.ts && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+		"test": "SKIN_DIR=skin/default node --import tsx --import ./src/lib/skin/register-node.ts --experimental-test-module-mocks --test \"src/**/*.test.ts\"",
+		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+		"format": "prettier --write .",
+		"lint": "prettier --check .",
+		"migrate": "tsx --env-file=.env scripts/migrate.ts",
+		"prune-audit": "tsx --env-file=.env scripts/prune-audit.ts",
+		"seed": "tsx --env-file=.env scripts/seed.ts",
+		"export-members": "tsx --env-file=.env scripts/export-members.ts",
+		"import-members": "tsx --env-file=.env scripts/import-members.ts"
+	},
+	"devDependencies": {
+		"@sveltejs/adapter-node": "^5.2.12",
+		"@sveltejs/kit": "^2.49.2",
+		"@sveltejs/vite-plugin-svelte": "^6.2.1",
+		"@tailwindcss/forms": "^0.5.11",
+		"@tailwindcss/typography": "^0.5.16",
+		"@types/markdown-it": "^14.1.2",
+		"@types/node": "^22.19.15",
+		"@types/pg": "^8.11.10",
+		"autoprefixer": "^10.4.23",
+		"postcss": "^8.5.6",
+		"prettier": "^3.3.3",
+		"prettier-plugin-svelte": "^3.2.6",
+		"prettier-plugin-tailwindcss": "^0.8.1",
+		"svelte": "^5.46.1",
+		"svelte-check": "^4.0.4",
+		"tailwindcss": "^3.4.19",
+		"tsx": "^4.21.0",
+		"typescript": "^5.9.3",
+		"vite": "^7.3.0"
+	},
+	"dependencies": {
+		"@upstash/redis": "^1.34.0",
+		"form-data": "^4.0.5",
+		"mailgun.js": "^13.0.0",
+		"markdown-it": "^14.1.0",
+		"mdsvex": "^0.12.7",
+		"pg": "^8.13.1",
+		"redis": "^5.12.1",
+		"sharp": "0.35.5",
+		"yaml": "2.8.1"
+	}
+}

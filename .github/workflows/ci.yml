@@ -1,0 +1,108 @@
+# The gate deploy/deploy.sh deliberately does not run. That script checks
+# configuration and reachability on a host carrying neither Node nor pnpm; this
+# checks the code. Core deploys nowhere: a site's own repository pins a core
+# release and runs its deploy job (docs/skin-repository.md).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege: nothing here writes to the repository.
+permissions:
+  contents: read
+
+concurrency:
+  # A newer push to the same ref supersedes one still running.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Actions are pinned to commit SHAs because a `@v7` tag is a pointer its
+    # publisher can move, which is a supply-chain hop this repository does not
+    # otherwise leave open. A SHA cannot be read back as a release, so the three
+    # below are checkout 7.0.1, pnpm/action-setup 6.0.10 and setup-node 7.0.0.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      # Deliberately given no version: pnpm/action-setup reads `packageManager`
+      # from package.json, so the pnpm that wrote the lockfile and the pnpm that
+      # installs from it cannot disagree.
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          # From .nvmrc rather than a literal. scripts/check-node-pin.ts asserts
+          # package.json, .nvmrc and the Dockerfile already agree; a version
+          # written here would be a fourth place to drift, outside that check.
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm test
+      - run: pnpm build
+      - run: bash deploy/ci-deploy.test.sh
+      - run: bash deploy/deploy.test.sh
+      - run: bash deploy/e44-review-local-pin.test.sh
+      - run: bash deploy/e44-review-r5-stamps.test.sh
+      - run: bash deploy/e44-review-r6-rollback.test.sh
+      - run: bash deploy/e44-review-r6-partial-update.test.sh
+      - run: bash deploy/e44-review-backup-unrelated.test.sh
+      - run: bash deploy/e44-review-resume-range.test.sh
+      - run: bash deploy/e44-review-dirty-core.test.sh
+      - run: bash deploy/e44-review-interrupted-parent.test.sh
+      - run: bash deploy/e44-review-index-hints.test.sh
+      - run: bash deploy/e44-review-interrupted-recovery.test.sh
+      - run: node --test scripts/e44-review-skin-config.test.mjs
+      # Its subjects, the starter files and the community runbook, leave core in
+      # the split, so an exported core has nothing for it to read.
+      - run: if [ -d skin-repository ]; then node --test scripts/e45-review-contract.test.mjs; fi
+      - run: if [ -d skin-repository ]; then node --test scripts/e45-review-recovery.test.mjs; fi
+      - run: if [ -d skin-repository ]; then node --test scripts/e45-review-runtime-config.test.mjs; fi
+      - run: if [ -d skin-repository ]; then node --test scripts/e45-review-external-dependency-path.test.mjs; fi
+      - run: sudo apt-get update -q && sudo apt-get install -y -q age rclone
+      - run: sudo bash deploy/backup.test.sh
+      - run: sudo bash deploy/backup-queue-progress.test.sh
+      - run: sudo python3 deploy/backup-b2-deadline.test.py
+      - run: sudo python3 deploy/backup-heartbeat-deadline.test.py
+
+  # The promise docs/upgrading.md makes: a database built by the newest release
+  # takes this code with no manual step. scripts/upgrade-check.sh says what it
+  # runs, and passes with a notice while no release tag exists.
+  upgrade:
+    runs-on: ubuntu-latest
+    services:
+      # The images docker-compose.yml pins, so the upgrade runs on the Postgres
+      # a deployment does.
+      postgres:
+        image: postgres:17.4-alpine
+        env:
+          POSTGRES_USER: upgrade
+          POSTGRES_PASSWORD: upgrade
+          POSTGRES_DB: upgrade
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U upgrade" --health-interval 2s --health-timeout 5s --health-retries 30
+      redis:
+        image: redis:7.4-alpine
+        ports: ['6379:6379']
+    env:
+      POSTGRES_HOST: 127.0.0.1
+      POSTGRES_PORT: '5432'
+      POSTGRES_DATABASE: upgrade
+      POSTGRES_USER: upgrade
+      POSTGRES_PASSWORD: upgrade
+      REDIS_URL: redis://127.0.0.1:6379
+    steps:
+      # Full history, because the newest release tag is what it upgrades from.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: bash scripts/upgrade-check.sh "$RUNNER_TEMP/upgrade"

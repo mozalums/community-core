@@ -1,0 +1,93 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Text inputs, textareas, and selects focus in gray-500 (#6b7280) instead of the
+   @tailwindcss/forms default blue — matching the nav search box. Checkboxes/radios
+   are left alone. Explicit `focus:*` utility classes still win where set. */
+@layer base {
+	input:not([type]):focus,
+	[type='text']:focus,
+	[type='email']:focus,
+	[type='url']:focus,
+	[type='password']:focus,
+	[type='number']:focus,
+	[type='search']:focus,
+	[type='tel']:focus,
+	[type='date']:focus,
+	[type='datetime-local']:focus,
+	[type='month']:focus,
+	[type='week']:focus,
+	[type='time']:focus,
+	textarea:focus,
+	select:focus {
+		--tw-ring-color: #6b7280;
+		border-color: #6b7280;
+	}
+}
+
+/* Checked checkboxes in dark mode. @tailwindcss/forms fills a checked box with
+   `currentColor` and paints a hard-coded *white* tick over it, so the
+   `dark:text-neutral-100` these inputs carry produced a white tick on a
+   near-white box — the boxes read as unchecked. Keep the light box (it inverts
+   light mode's black box / white tick) and darken the tick instead. */
+@layer base {
+	.dark [type='checkbox']:checked {
+		background-image: url("data:image/svg+xml,%3csvg viewBox='0 0 16 16' fill='%23171717' xmlns='http://www.w3.org/2000/svg'%3e%3cpath d='M12.207 4.793a1 1 0 010 1.414l-5 5a1 1 0 01-1.414 0l-2-2a1 1 0 011.414-1.414L6.5 9.086l4.293-4.293a1 1 0 011.414 0z'/%3e%3c/svg%3e");
+	}
+
+	.dark [type='checkbox']:indeterminate {
+		background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 16 16'%3e%3cpath stroke='%23171717' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M4 8h8'/%3e%3c/svg%3e");
+	}
+}
+
+html,
+body {
+	height: 100%;
+	background: #000;
+	color: #fff;
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+}
+
+body {
+	overscroll-behavior: none;
+	-webkit-tap-highlight-color: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	* {
+		animation-duration: 1ms !important;
+		/* Without this, clamping the duration makes an infinite animation worse
+		   rather than gone: `animate-spin` keeps looping, now at a thousand
+		   revolutions a second. Capping the iterations lets it end. */
+		animation-iteration-count: 1 !important;
+		transition-duration: 1ms !important;
+	}
+}
+
+/* Belt-and-suspenders against horizontal scroll on phones. iOS Safari can
+   introduce it in ways desktop Chrome doesn't (e.g. from fixed/vw elements or
+   sub-pixel widths). No sticky elements are used at this width, so clipping the
+   x-axis is safe here (it would break the desktop sticky sidebar, so it's
+   scoped to mobile). */
+@media (max-width: 767px) {
+	html,
+	body {
+		overflow-x: hidden;
+	}
+}
+
+/* iOS Safari zooms the viewport in whenever you focus a form control whose
+   font-size is under 16px, and never zooms back out. Force every editable
+   control to 16px on phones so focusing one (e.g. the drawer search) never
+   triggers the zoom. Desktop keeps its smaller text-sm sizing. Checkboxes /
+   radios are excluded — iOS doesn't zoom for them. !important so it wins over
+   Tailwind's text-sm/text-xs utilities. */
+@media (max-width: 767px) {
+	input:not([type='checkbox']):not([type='radio']):not([type='hidden']),
+	textarea,
+	select {
+		font-size: 16px !important;
+	}
+}

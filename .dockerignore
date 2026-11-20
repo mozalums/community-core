@@ -1,0 +1,17 @@
+node_modules
+.svelte-kit
+build
+.env
+.env.*
+!.env.example
+docs
+*.md
+# A skin's long copy is Markdown, and the loader refuses a skin without it.
+!skin/**/*.md
+.git
+.gitignore
+.DS_Store
+# A community keeps its runbook and deploy files beside its skin; the image
+# needs neither, and the runbook records the host.
+skin/*/RUNBOOK.md
+skin/*/deploy

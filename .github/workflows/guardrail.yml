@@ -1,0 +1,33 @@
+# The review requirement GitHub's free plan does not enforce on a private
+# repository: no branch protection, no CODEOWNERS. The decision lives in
+# .github/guardrail/guardrail.mjs, which has tests in core; this file only runs
+# it. Read docs/skin-repository.md in core for what it does and does not stop.
+name: Guardrail
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+
+# Reads only. A fork's pull request gets a read-only token whatever this says,
+# and the guardrail never needs more.
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  maintainer-approval:
+    runs-on: ubuntu-latest
+    steps:
+      # The base branch, not the pull request: a pull request that edits the
+      # guardrail is judged by the guardrail it would replace. Pinned to the
+      # checkout 7.0.1 commit, as core's CI pins it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+          sparse-checkout: .github/guardrail
+          persist-credentials: false
+      - run: node .github/guardrail/guardrail.mjs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

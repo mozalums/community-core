@@ -18,6 +18,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { promisify } from 'node:util';
+import { createServer as createViteServer } from 'vite';
 import {
 	CODE_EXTENSIONS,
 	DEFAULT_SKIN_DIR,
@@ -42,7 +43,15 @@ import { stageSkinAssets } from './assets.js';
 import * as fieldSchema from '../server/field-schema';
 import { DEFAULT_FIELD_SCHEMA } from '../server/field-schema';
 import { EVERY_ROLE_FIELDS, fieldSchemaWith } from '../server/field-schema-fake';
-import { COPY_NAMES, skinCopy } from '../server/skin-copy';
+import {
+	COPY_NAMES,
+	MEMBER_COUNT,
+	hasSkinCopy,
+	skinCopy,
+	withMemberCount
+} from '../server/skin-copy';
+import { SESSION_TTL } from '../server/session-lifetime';
+import { parseAuditConfig } from '../server/audit-core';
 
 const ROOT = new URL('../../../', import.meta.url).pathname;
 const read = (p: string) => readFileSync(join(ROOT, p), 'utf8');
@@ -199,37 +208,41 @@ test('R2: an unknown key, a missing required key and a wrong type are each an er
 	assert.match(twice.message, /invalid YAML/);
 });
 
-test('R2: the Skin type and the validator come from the one definition in schema.ts', { skip: noCommunity }, () => {
-	const skin: Skin = loadSkinDir(DEFAULT).skin;
-	const legal: string = skin.site.legal_name;
-	assert.equal(legal, 'Example Community');
-	// @ts-expect-error the type has only the keys the schema declares
-	assert.equal(skin.site.legl_name, undefined);
-	// @ts-expect-error an enum value the schema does not list is not in the type
-	const bad: Skin['fields'][number]['visibility'] = 'hidden';
-	assert.ok(bad);
+test(
+	'R2: the Skin type and the validator come from the one definition in schema.ts',
+	{ skip: noCommunity },
+	() => {
+		const skin: Skin = loadSkinDir(DEFAULT).skin;
+		const legal: string = skin.site.legal_name;
+		assert.equal(legal, 'Example Community');
+		// @ts-expect-error the type has only the keys the schema declares
+		assert.equal(skin.site.legl_name, undefined);
+		// @ts-expect-error an enum value the schema does not list is not in the type
+		const bad: Skin['fields'][number]['visibility'] = 'hidden';
+		assert.ok(bad);
 
-	// Every key the validator accepts is one the schema describes, and the
-	// reverse: a key cannot be in one and not the other.
-	const paths = describeSkinSchema().map((r) => r.path);
-	const seen = new Set<string>();
-	const walk = (v: unknown, at: string): void => {
-		if (Array.isArray(v)) return v.forEach((item) => walk(item, `${at}[]`));
-		if (typeof v !== 'object' || v === null) return;
-		for (const [k, child] of Object.entries(v)) {
-			seen.add(at ? `${at}.${k}` : k);
-			walk(child, at ? `${at}.${k}` : k);
-		}
-	};
-	walk(skin, '');
-	walk(loadSkinDir(COMMUNITY).skin, '');
-	assert.deepEqual([...seen].sort(), [...paths].sort());
+		// Every key the validator accepts is one the schema describes, and the
+		// reverse: a key cannot be in one and not the other.
+		const paths = describeSkinSchema().map((r) => r.path);
+		const seen = new Set<string>();
+		const walk = (v: unknown, at: string): void => {
+			if (Array.isArray(v)) return v.forEach((item) => walk(item, `${at}[]`));
+			if (typeof v !== 'object' || v === null) return;
+			for (const [k, child] of Object.entries(v)) {
+				seen.add(at ? `${at}.${k}` : k);
+				walk(child, at ? `${at}.${k}` : k);
+			}
+		};
+		walk(skin, '');
+		walk(loadSkinDir(COMMUNITY).skin, '');
+		assert.deepEqual([...seen].sort(), [...paths].sort());
 
-	const definers = sources('src').filter(
-		(p) => !p.endsWith('.test.ts') && /legal_name\s*:/.test(read(p))
-	);
-	assert.deepEqual(definers, ['src/lib/skin/schema.ts'], 'a second module declares skin keys');
-});
+		const definers = sources('src').filter(
+			(p) => !p.endsWith('.test.ts') && /legal_name\s*:/.test(read(p))
+		);
+		assert.deepEqual(definers, ['src/lib/skin/schema.ts'], 'a second module declares skin keys');
+	}
+);
 
 test('R2: YAML is parsed by the yaml package pinned in pnpm-lock.yaml, and by nothing hand-written', () => {
 	const version = JSON.parse(read('package.json')).dependencies.yaml;
@@ -340,38 +353,53 @@ test('R3: a skin directory holding a code file or a link is refused by name', (t
 // 4: one switch
 // ---------------------------------------------------------------------------
 
-test('R4: SKIN_DIR selects the skin for the alias and the server, and both default to skin/default', { skip: noCommunity }, async (t) => {
-	const before = process.env.SKIN_DIR;
-	t.after(() => {
-		if (before === undefined) delete process.env.SKIN_DIR;
-		else process.env.SKIN_DIR = before;
-	});
-	const alias = async (tag: string) =>
-		(await import(`../../../svelte.config.js?${tag}`)).default.kit.alias.$skin;
+test(
+	'R4: SKIN_DIR selects the skin for the alias and the server, and both default to skin/default',
+	{ skip: noCommunity },
+	async (t) => {
+		const before = process.env.SKIN_DIR;
+		t.after(() => {
+			if (before === undefined) delete process.env.SKIN_DIR;
+			else process.env.SKIN_DIR = before;
+		});
+		const alias = async (tag: string) =>
+			(await import(`../../../svelte.config.js?${tag}`)).default.kit.alias.$skin;
 
-	process.env.SKIN_DIR = COMMUNITY_REL;
-	assert.equal(await alias('set'), COMMUNITY_REL);
-	assert.equal(skinDir(), COMMUNITY_REL);
+		process.env.SKIN_DIR = COMMUNITY_REL;
+		assert.equal(await alias('set'), COMMUNITY_REL);
+		assert.equal(skinDir(), COMMUNITY_REL);
 
-	delete process.env.SKIN_DIR;
-	assert.equal(await alias('unset'), DEFAULT_SKIN_DIR);
-	assert.equal(skinDir(), DEFAULT_SKIN_DIR);
-	assert.equal(DEFAULT_SKIN_DIR, 'skin/default');
-});
+		delete process.env.SKIN_DIR;
+		assert.equal(await alias('unset'), DEFAULT_SKIN_DIR);
+		assert.equal(skinDir(), DEFAULT_SKIN_DIR);
+		assert.equal(DEFAULT_SKIN_DIR, 'skin/default');
+	}
+);
 
 test('E44 R2: the Dockerfile copies the skin from a context named skin, and compose passes it to every build from SKIN_DIR', () => {
 	const dockerfile = read('Dockerfile');
 	const stages = dockerfile.split(/^FROM /m);
 	const skinStage = stages.find((stage) => /^scratch AS skin$/m.test(stage));
 	assert.ok(skinStage, 'no default stage named skin');
-	assert.match(skinStage, /^COPY skin\/default\/ \/$/m, 'the default stage is not the default skin');
+	assert.match(
+		skinStage,
+		/^COPY skin\/default\/ \/$/m,
+		'the default stage is not the default skin'
+	);
 	const build = stages.find((stage) => / AS build$/m.test(stage)) ?? '';
 	const final = stages.at(-1) ?? '';
 	assert.doesNotMatch(dockerfile, /^ARG SKIN_DIR/m, 'SKIN_DIR is still a build argument');
-	for (const entry of ['/skin.yaml /theme.css skin/', '/copy/ skin/copy/', '/static/ skin/static/']) {
+	for (const entry of [
+		'/skin.yaml /theme.css skin/',
+		'/copy/ skin/copy/',
+		'/static/ skin/static/'
+	]) {
 		const line = `COPY --from=skin ${entry}`;
 		assert.ok(build.includes(line), `the build stage lacks ${line}`);
-		assert.ok(build.indexOf(line) < build.indexOf('RUN pnpm run build'), `${line} comes after the build`);
+		assert.ok(
+			build.indexOf(line) < build.indexOf('RUN pnpm run build'),
+			`${line} comes after the build`
+		);
 	}
 	for (const stage of [build, final]) assert.match(stage, /^ENV SKIN_DIR=skin$/m);
 	assert.match(final, /^COPY --from=build \/app\/skin\/ skin\/$/m);
@@ -387,8 +415,16 @@ test('E44 R2: the Dockerfile copies the skin from a context named skin, and comp
 	);
 	for (const svc of built) {
 		const name = svc.split(':')[0];
-		assert.match(svc, /^ {6}additional_contexts:\n {8}skin: \$\{SKIN_DIR:-skin\/default\}$/m, `${name} gets no skin context`);
-		assert.doesNotMatch(svc, /^ {8}SKIN_DIR:/m, `${name} still passes SKIN_DIR as a build argument`);
+		assert.match(
+			svc,
+			/^ {6}additional_contexts:\n {8}skin: \$\{SKIN_DIR:-skin\/default\}$/m,
+			`${name} gets no skin context`
+		);
+		assert.doesNotMatch(
+			svc,
+			/^ {8}SKIN_DIR:/m,
+			`${name} still passes SKIN_DIR as a build argument`
+		);
 		// The secrets file may carry the host's SKIN_DIR for the build; env_file
 		// would hand that path to a container where it names nothing.
 		assert.match(svc, /^ {6}SKIN_DIR: skin$/m, `${name} does not pin the in-image skin path`);
@@ -396,49 +432,63 @@ test('E44 R2: the Dockerfile copies the skin from a context named skin, and comp
 	assert.match(read('.dockerignore'), /^!skin\/\*\*\/\*\.md$/m);
 });
 
-test('R4: the line that reports the build SHA names the skin, read from the compiled-in skin', { skip: noCommunity }, () => {
-	const landing = read('src/lib/components/Landing.svelte');
-	const sidebar = read('src/lib/components/Sidebar.svelte');
-	for (const src of [landing, sidebar]) {
-		assert.match(src, /import \{ id as skinId \} from '\$skin\/skin\.yaml';/);
+test(
+	'R4: the line that reports the build SHA names the skin, read from the compiled-in skin',
+	{ skip: noCommunity },
+	() => {
+		const landing = read('src/lib/components/Landing.svelte');
+		const sidebar = read('src/lib/components/Sidebar.svelte');
+		for (const src of [landing, sidebar]) {
+			assert.match(src, /import \{ id as skinId \} from '\$skin\/skin\.yaml';/);
+		}
+		assert.match(
+			landing,
+			/^\s*build \{buildSha\}\{coreTag \? ` · core \$\{coreTag\}` : ''\} · skin \{skinId\}$/m
+		);
+		assert.match(
+			sidebar,
+			/`build \$\{buildSha\}\$\{coreTag \? ` · core \$\{coreTag\}` : ''\} · skin \$\{skinId\}`/
+		);
+		assert.match(
+			skinModuleSource(loadSkinDir(COMMUNITY)),
+			new RegExp(`^export const id = "${COMMUNITY_ID}";$`, 'm')
+		);
 	}
-	assert.match(landing, /^\s*build \{buildSha\}\{coreTag \? ` · core \$\{coreTag\}` : ''\} · skin \{skinId\}$/m);
-	assert.match(sidebar, /`build \$\{buildSha\}\$\{coreTag \? ` · core \$\{coreTag\}` : ''\} · skin \$\{skinId\}`/);
-	assert.match(
-		skinModuleSource(loadSkinDir(COMMUNITY)),
-		new RegExp(`^export const id = "${COMMUNITY_ID}";$`, 'm')
-	);
-});
+);
 
 // ---------------------------------------------------------------------------
 // 5: site.ts reads the skin
 // ---------------------------------------------------------------------------
 
-test('R5: site.ts takes the legal name and the fallback domain from the skin, and LEGAL_UPDATED_AT is gone', { skip: noCommunity }, async (t) => {
-	const src = read('src/lib/site.ts');
-	const { site } = loadSkinDir(COMMUNITY).skin;
-	for (const literal of [site.legal_name, site.domain]) {
-		for (const q of ['"', "'", '`']) {
-			assert.ok(!src.includes(`${q}${literal}${q}`), `an identity literal: ${literal}`);
+test(
+	'R5: site.ts takes the legal name and the fallback domain from the skin, and LEGAL_UPDATED_AT is gone',
+	{ skip: noCommunity },
+	async (t) => {
+		const src = read('src/lib/site.ts');
+		const { site } = loadSkinDir(COMMUNITY).skin;
+		for (const literal of [site.legal_name, site.domain]) {
+			for (const q of ['"', "'", '`']) {
+				assert.ok(!src.includes(`${q}${literal}${q}`), `an identity literal: ${literal}`);
+			}
 		}
-	}
-	const named = sources('src').filter((p) => /LEGAL_UPDATED_AT/.test(read(p)));
-	assert.deepEqual(named, ['src/lib/skin/skin.test.ts']);
-	const identity = sources('src/lib').filter(
-		(p) =>
-			!p.endsWith('.test.ts') && /export const COMPANY_|export const APP_APEX_DOMAIN/.test(read(p))
-	);
-	assert.deepEqual(identity, ['src/lib/site.ts'], 'a second identity module');
+		const named = sources('src').filter((p) => /LEGAL_UPDATED_AT/.test(read(p)));
+		assert.deepEqual(named, ['src/lib/skin/skin.test.ts']);
+		const identity = sources('src/lib').filter(
+			(p) =>
+				!p.endsWith('.test.ts') &&
+				/export const COMPANY_|export const APP_APEX_DOMAIN/.test(read(p))
+		);
+		assert.deepEqual(identity, ['src/lib/site.ts'], 'a second identity module');
 
-	// The module the Vite plugin serves for `$skin/skin.yaml`, per skin.
-	const load = async (dir: string, tag: string) => {
-		const stubs = {
-			'$env/dynamic/public': 'export const env = globalThis.__publicEnv;',
-			'$skin/skin.yaml': skinModuleSource(loadSkinDir(dir))
-		};
-		register(
-			'data:text/javascript,' +
-				encodeURIComponent(`
+		// The module the Vite plugin serves for `$skin/skin.yaml`, per skin.
+		const load = async (dir: string, tag: string) => {
+			const stubs = {
+				'$env/dynamic/public': 'export const env = globalThis.__publicEnv;',
+				'$skin/skin.yaml': skinModuleSource(loadSkinDir(dir))
+			};
+			register(
+				'data:text/javascript,' +
+					encodeURIComponent(`
   const stubs = ${JSON.stringify(stubs)};
   export async function resolve(specifier, context, next) {
     if (specifier in stubs && context.parentURL?.includes(${JSON.stringify(`site.ts?${tag}`)})) return {
@@ -448,28 +498,29 @@ test('R5: site.ts takes the legal name and the fallback domain from the skin, an
     return next(specifier, context);
   }
 `),
-			import.meta.url
-		);
-		return import(`../site.ts?${tag}`);
-	};
-	const g = globalThis as { __publicEnv?: Record<string, string> };
-	t.after(() => delete g.__publicEnv);
+				import.meta.url
+			);
+			return import(`../site.ts?${tag}`);
+		};
+		const g = globalThis as { __publicEnv?: Record<string, string> };
+		t.after(() => delete g.__publicEnv);
 
-	g.__publicEnv = {};
-	const plain = await load(DEFAULT, 'default');
-	assert.equal(plain.COMPANY_LEGAL_NAME, 'Example Community');
-	assert.equal(plain.APP_APEX_DOMAIN, 'example.org');
-	assert.equal(plain.APP_BASE_URL, 'https://www.example.org');
+		g.__publicEnv = {};
+		const plain = await load(DEFAULT, 'default');
+		assert.equal(plain.COMPANY_LEGAL_NAME, 'Example Community');
+		assert.equal(plain.APP_APEX_DOMAIN, 'example.org');
+		assert.equal(plain.APP_BASE_URL, 'https://www.example.org');
 
-	const community = loadSkinDir(COMMUNITY).skin.site;
-	const other = await load(COMMUNITY, COMMUNITY_ID);
-	assert.equal(other.COMPANY_LEGAL_NAME, community.legal_name);
-	assert.equal(other.APP_APEX_DOMAIN, community.domain);
+		const community = loadSkinDir(COMMUNITY).skin.site;
+		const other = await load(COMMUNITY, COMMUNITY_ID);
+		assert.equal(other.COMPANY_LEGAL_NAME, community.legal_name);
+		assert.equal(other.APP_APEX_DOMAIN, community.domain);
 
-	g.__publicEnv = { PUBLIC_BASE_DOMAIN: 'chess.example' };
-	const overridden = await load(DEFAULT, 'env');
-	assert.equal(overridden.APP_APEX_DOMAIN, 'chess.example', 'the skin outranked the environment');
-});
+		g.__publicEnv = { PUBLIC_BASE_DOMAIN: 'chess.example' };
+		const overridden = await load(DEFAULT, 'env');
+		assert.equal(overridden.APP_APEX_DOMAIN, 'chess.example', 'the skin outranked the environment');
+	}
+);
 
 // ---------------------------------------------------------------------------
 // 6: the field schema lives in skin.yaml
@@ -487,25 +538,29 @@ test('R6: the field schema is the running skin’s fields key, and platform code
 	assert.doesNotMatch(src, /\bkey: '|label: '/, 'field-schema.ts still declares a field');
 });
 
-test('R6: the default skin carries the small generic set and the community skin the full one', { skip: noCommunity }, () => {
-	const fields = (dir: string) => loadSkinDir(dir).skin.fields;
-	assert.deepEqual(
-		fields(DEFAULT).map((f) => [f.key, f.visibility]),
-		[
-			['name', 'members'],
-			['country', 'members'],
-			['city', 'members'],
-			['bio', 'members'],
-			['phone', 'private']
-		]
-	);
-	const moz = fields(COMMUNITY);
-	assert.equal(moz.length, 31);
-	assert.equal(moz.filter((f) => f.role === 'affiliation').length, 6);
-	for (const role of ['handle', 'tenureStart', 'tenureEnd', 'publicProfile', 'avatar'] as const) {
-		assert.equal(moz.filter((f) => f.role === role).length, 1, role);
+test(
+	'R6: the default skin carries the small generic set and the community skin the full one',
+	{ skip: noCommunity },
+	() => {
+		const fields = (dir: string) => loadSkinDir(dir).skin.fields;
+		assert.deepEqual(
+			fields(DEFAULT).map((f) => [f.key, f.visibility]),
+			[
+				['name', 'members'],
+				['country', 'members'],
+				['city', 'members'],
+				['bio', 'members'],
+				['phone', 'private']
+			]
+		);
+		const moz = fields(COMMUNITY);
+		assert.equal(moz.length, 31);
+		assert.equal(moz.filter((f) => f.role === 'affiliation').length, 6);
+		for (const role of ['handle', 'tenureStart', 'tenureEnd', 'publicProfile', 'avatar'] as const) {
+			assert.equal(moz.filter((f) => f.role === role).length, 1, role);
+		}
 	}
-});
+);
 
 const FIELD = (key: string, extra = '') =>
 	`  - { key: ${key}, label: ${key}, type: text, visibility: members${extra} }\n`;
@@ -700,51 +755,62 @@ test('R6: an option list or required on a field whose control cannot honor it is
 	);
 });
 
-test('R6: both shipped skins declare the controls their editor had, and the default phone stays optional', { skip: noCommunity }, () => {
-	const controls = (dir: string) =>
-		Object.fromEntries(
-			loadSkinDir(dir)
-				.skin.fields.filter((f) => f.options || f.required !== undefined)
-				.map((f) => [f.key, [f.options ?? null, f.required ?? null]])
-		);
-	assert.deepEqual(controls(DEFAULT), {
-		country: ['countries', true],
-		city: ['cities', null]
-	});
-	assert.deepEqual(controls(COMMUNITY), {
-		firstName: [null, true],
-		country: ['countries', true],
-		city: ['cities', null],
-		startYear: ['years', true],
-		endYear: ['years', true],
-		linkedin: [null, true],
-		cellCode: ['dialingCodes', null],
-		sizeUnisex: ['sizes', null],
-		sizeMens: ['sizes', null],
-		sizeWomens: ['sizes', null]
-	});
-});
+test(
+	'R6: both shipped skins declare the controls their editor had, and the default phone stays optional',
+	{ skip: noCommunity },
+	() => {
+		const controls = (dir: string) =>
+			Object.fromEntries(
+				loadSkinDir(dir)
+					.skin.fields.filter((f) => f.options || f.required !== undefined)
+					.map((f) => [f.key, [f.options ?? null, f.required ?? null]])
+			);
+		assert.deepEqual(controls(DEFAULT), {
+			country: ['countries', true],
+			city: ['cities', null]
+		});
+		assert.deepEqual(controls(COMMUNITY), {
+			firstName: [null, true],
+			country: ['countries', true],
+			city: ['cities', null],
+			startYear: ['years', true],
+			endYear: ['years', true],
+			linkedin: [null, true],
+			cellCode: ['dialingCodes', null],
+			sizeUnisex: ['sizes', null],
+			sizeMens: ['sizes', null],
+			sizeWomens: ['sizes', null]
+		});
+	}
+);
 
 // Core's page documents the skin core ships; the community's own fields are
 // documented in its runbook, beside the skin that declares them.
-test('R6: docs/data-model.md lists every field the default skin declares, and the community runbook every field its skin does', { skip: noCommunity }, () => {
-	const model =
-		read('docs/data-model.md')
-			.split(/^## Member fields$/m)[1]
-			?.split(/^## /m)[0] ?? '';
-	assert.ok(model.includes('`skin/default`'), 'docs/data-model.md does not name the default skin');
-	for (const f of loadSkinDir(DEFAULT).skin.fields) {
-		assert.ok(model.includes(`\`${f.key}\``), `${f.key} unlisted in docs/data-model.md`);
+test(
+	'R6: docs/data-model.md lists every field the default skin declares, and the community runbook every field its skin does',
+	{ skip: noCommunity },
+	() => {
+		const model =
+			read('docs/data-model.md')
+				.split(/^## Member fields$/m)[1]
+				?.split(/^## /m)[0] ?? '';
+		assert.ok(
+			model.includes('`skin/default`'),
+			'docs/data-model.md does not name the default skin'
+		);
+		for (const f of loadSkinDir(DEFAULT).skin.fields) {
+			assert.ok(model.includes(`\`${f.key}\``), `${f.key} unlisted in docs/data-model.md`);
+		}
+		const runbook =
+			read(`${COMMUNITY_REL}/RUNBOOK.md`)
+				.split(/^## Member fields$/m)[1]
+				?.split(/^## /m)[0] ?? '';
+		assert.ok(runbook.includes(`\`${COMMUNITY_REL}\``), 'the runbook does not name its skin');
+		for (const f of loadSkinDir(COMMUNITY).skin.fields) {
+			assert.ok(runbook.includes(`\`${f.key}\``), `${f.key} unlisted in the runbook`);
+		}
 	}
-	const runbook =
-		read(`${COMMUNITY_REL}/RUNBOOK.md`)
-			.split(/^## Member fields$/m)[1]
-			?.split(/^## /m)[0] ?? '';
-	assert.ok(runbook.includes(`\`${COMMUNITY_REL}\``), 'the runbook does not name its skin');
-	for (const f of loadSkinDir(COMMUNITY).skin.fields) {
-		assert.ok(runbook.includes(`\`${f.key}\``), `${f.key} unlisted in the runbook`);
-	}
-});
+);
 
 test('R6: neither skin carries a Sheet header alias', () => {
 	for (const dir of SHIPPED) {
@@ -803,7 +869,9 @@ const SKIN_SUBJECT: Record<string, string> = {
 	'scripts/e45-review-contract.test.mjs':
 		"the community skin's cutover runbook, and the split's test module run in an exported core",
 	'src/e46-org-repos.test.ts':
-		"the one-commit split, the skin tests run in its core, and the release's default skin the upgrade boots on"
+		"the one-commit split, the skin tests run in its core, and the release's default skin the upgrade boots on",
+	'scripts/e53-review-cookies.test.mjs':
+		"retired-cookie expiry on the community skin's production build, as the review reproduced it, committed unchanged"
 };
 
 test('R7: no application test selects a skin, by environment, by directory or by reading another skin as data', () => {
@@ -844,7 +912,9 @@ test('R7: no application test selects a skin, by environment, by directory or by
 	}
 	// A test that needs a role the default skin leaves out replaces the field
 	// schema with a list from the one fixture module, and nothing else about
-	// the skin.
+	// the skin. The one change it may make inline is one key's visibility or
+	// exact filter, so a case reads as a fixture list with one field taken out
+	// of view or made a filter, and the fixture still validates the result.
 	const mocksSchema = tests.filter((p) => /mock\.module\([^)]*field-schema/.test(read(p)));
 	const inSrc = mocksSchema.filter((p) => p.startsWith('src/'));
 	assert.ok(inSrc.length >= 14, 'the tests on another field set were not found');
@@ -855,17 +925,18 @@ test('R7: no application test selects a skin, by environment, by directory or by
 	for (const p of inSrc) {
 		assert.match(
 			read(p),
-			/^mock\.module\('\$lib\/server\/field-schema', \{\s*namedExports: fieldSchemaWith\([A-Z0-9_]+_FIELDS\)\s*\}\);$/m,
+			/^mock\.module\('\$lib\/server\/field-schema', \{\s*namedExports: fieldSchemaWith\([A-Z0-9_]+_FIELDS(\.map\(\(f\) =>\s*f\.key === '[A-Za-z0-9]+' \? \{ \.\.\.f, (visibility: '(private|admin)' as const|filter: 'exact'( as const)?) \} : f\s*\))?\)\s*\}\);$/m,
 			`${p} replaces the field schema with something other than a field list`
 		);
 	}
-	// A probe builds its list inline, and still hands it to the fixture.
+	// A probe builds its list inline or names a fixture list, and still hands
+	// it to the fixture.
 	for (const p of mocksSchema.filter((x) => !x.startsWith('src/'))) {
 		const mocks = read(p).match(/mock\.module\([^)]*field-schema[^\n]*/g) ?? [];
 		for (const m of mocks) {
 			assert.match(
 				m,
-				/^mock\.module\(file\('src\/lib\/server\/field-schema\.ts'\), \{ namedExports: (schema|fieldSchemaWith\(fields\)) \}\);$/,
+				/^mock\.module\(file\('src\/lib\/server\/field-schema\.ts'\), \{ namedExports: (schema|fieldSchemaWith\((fields|[A-Z0-9_]+_FIELDS)\)) \}\);$/,
 				`${p} replaces the field schema with something other than a field list`
 			);
 		}
@@ -881,38 +952,42 @@ test('R7: no application test selects a skin, by environment, by directory or by
 	);
 });
 
-test('R7: the field-schema fixture refuses a process running on anything but the shipped default skin', { skip: noCommunity }, (t) => {
-	// A probe run by hand never passes through the package command, so the
-	// fixture checks the process it is in. The copy below still says
-	// `id: default`; the directory is what differs.
-	const dir = scratch(t);
-	const probe = `
+test(
+	'R7: the field-schema fixture refuses a process running on anything but the shipped default skin',
+	{ skip: noCommunity },
+	(t) => {
+		// A probe run by hand never passes through the package command, so the
+		// fixture checks the process it is in. The copy below still says
+		// `id: default`; the directory is what differs.
+		const dir = scratch(t);
+		const probe = `
 		const { fieldSchemaWith, EVERY_ROLE_FIELDS } = await import('./src/lib/server/field-schema-fake.ts');
 		fieldSchemaWith(EVERY_ROLE_FIELDS);
 	`;
-	const run = (skin: string | undefined) => {
-		const env = { ...process.env };
-		delete env.NODE_TEST_CONTEXT;
-		delete env.SKIN_DIR;
-		if (skin) env.SKIN_DIR = skin;
-		return spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', probe], {
-			cwd: ROOT,
-			env,
-			encoding: 'utf8',
-			timeout: 30000
-		});
-	};
-	for (const skin of [undefined, 'skin/default', DEFAULT]) {
-		const ok = run(skin);
-		assert.equal(ok.status, 0, `SKIN_DIR=${skin}: ${ok.stderr}`);
+		const run = (skin: string | undefined) => {
+			const env = { ...process.env };
+			delete env.NODE_TEST_CONTEXT;
+			delete env.SKIN_DIR;
+			if (skin) env.SKIN_DIR = skin;
+			return spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', probe], {
+				cwd: ROOT,
+				env,
+				encoding: 'utf8',
+				timeout: 30000
+			});
+		};
+		for (const skin of [undefined, 'skin/default', DEFAULT]) {
+			const ok = run(skin);
+			assert.equal(ok.status, 0, `SKIN_DIR=${skin}: ${ok.stderr}`);
+		}
+		for (const skin of [dir, COMMUNITY_REL]) {
+			const refused = run(skin);
+			assert.notEqual(refused.status, 0, `SKIN_DIR=${skin} was accepted`);
+			assert.match(refused.stderr, /field-schema-fake runs on skin\/default only/);
+			assert.ok(refused.stderr.includes(skin), 'the refusal does not name the skin it found');
+		}
 	}
-	for (const skin of [dir, COMMUNITY_REL]) {
-		const refused = run(skin);
-		assert.notEqual(refused.status, 0, `SKIN_DIR=${skin} was accepted`);
-		assert.match(refused.stderr, /field-schema-fake runs on skin\/default only/);
-		assert.ok(refused.stderr.includes(skin), 'the refusal does not name the skin it found');
-	}
-});
+);
 
 test('R7: a replaced field schema binds every helper to the given fields and leaves the running skin alone', () => {
 	const fake = fieldSchemaWith(EVERY_ROLE_FIELDS);
@@ -1010,21 +1085,25 @@ test('E41 R6: $skin follows SKIN_DIR under the test hook, not the alias the last
 // E41: what each shipped skin carries that platform code no longer does
 // ---------------------------------------------------------------------------
 
-test('E41 R3: the community skin keeps the copy and the hints that were in platform code', { skip: noCommunity }, () => {
-	assert.match(skinCopy('landing-hero', COMMUNITY), /^<h1>Once a .*<br>\nAlways a .*<\/h1>\n<p>/);
-	assert.equal((skinCopy('landing-hero', COMMUNITY).match(/<h1[\s>]/g) ?? []).length, 1);
-	assert.match(skinCopy('landing-band', COMMUNITY), /^<h2>Reconnect with your people\.<\/h2>/);
-	assert.match(skinCopy('sidebar', COMMUNITY), /healthier Internet/);
-	assert.match(skinCopy('affiliations-help', COMMUNITY), /select at least one/);
-	// A count typed into copy is wrong the day after; none moved with the copy.
-	for (const name of COPY_NAMES) {
-		assert.doesNotMatch(read(`${COMMUNITY_REL}/copy/${name}.md`), /\d{2,}\+/, name);
+test(
+	'E41 R3: the community skin keeps the copy and the hints that were in platform code',
+	{ skip: noCommunity },
+	() => {
+		assert.match(skinCopy('landing-hero', COMMUNITY), /^<h1>Once a .*<br>\nAlways a .*<\/h1>\n<p>/);
+		assert.equal((skinCopy('landing-hero', COMMUNITY).match(/<h1[\s>]/g) ?? []).length, 1);
+		assert.match(skinCopy('landing-band', COMMUNITY), /^<h2>Reconnect with your people\.<\/h2>/);
+		assert.match(skinCopy('sidebar', COMMUNITY), /healthier Internet/);
+		assert.match(skinCopy('affiliations-help', COMMUNITY), /select at least one/);
+		// A count typed into copy is wrong the day after; none moved with the copy.
+		for (const name of COPY_NAMES) {
+			assert.doesNotMatch(read(`${COMMUNITY_REL}/copy/${name}.md`), /\d{2,}\+/, name);
+		}
+		const fields = loadSkinDir(COMMUNITY).skin.fields;
+		const other = fields.find((f) => f.role === 'affiliationOther');
+		assert.equal(other?.placeholder, 'e.g. Hive Network, RustCon, Common Voice');
+		assert.ok(fields.find((f) => f.role === 'handle')?.placeholder);
 	}
-	const fields = loadSkinDir(COMMUNITY).skin.fields;
-	const other = fields.find((f) => f.role === 'affiliationOther');
-	assert.equal(other?.placeholder, 'e.g. Hive Network, RustCon, Common Voice');
-	assert.ok(fields.find((f) => f.role === 'handle')?.placeholder);
-});
+);
 
 test('E41 R4: a skin with a document renders it from its Markdown', { skip: noCommunity }, () => {
 	assert.match(skinCopy('manifesto', COMMUNITY), /^<h1>[^<]*Manifesto<\/h1>/);
@@ -1032,6 +1111,105 @@ test('E41 R4: a skin with a document renders it from its Markdown', { skip: noCo
 	assert.equal(skinCopy('manifesto', DEFAULT), '');
 	assert.equal(skinCopy('code-of-conduct', DEFAULT), '');
 });
+
+// ---------------------------------------------------------------------------
+// E35: the landing copy, read against the page it sits on
+// ---------------------------------------------------------------------------
+
+// The hero's claim about who can see the directory sits above the names the
+// skin publishes, so it is read here with those names under it.
+const plainText = (html: string) =>
+	html
+		.replace(/<!--[^]*?-->/g, '')
+		.replace(/<br>\n?/g, ' ')
+		.replace(/<[^>]+>/g, ' ')
+		.replace(/&amp;/g, '&')
+		.replace(/\s+/g, ' ')
+		.trim();
+const heroLine = () => plainText(skinCopy('landing-hero', COMMUNITY).split('</h1>')[1] ?? '');
+
+test('E35 R1: the hero states who the directory is for, unhedged', { skip: noCommunity }, () => {
+	assert.match(heroLine(), /^A members-only directory for /);
+	assert.doesNotMatch(heroLine(), /\b(may|might|mostly|partly|largely|some of|semi)\b/i);
+});
+
+test(
+	'E35 R2: a skin that publishes names does not call its directory private',
+	{ skip: noCommunity },
+	() => {
+		const publishes = loadSkinDir(COMMUNITY).skin.fields.some((f) => f.role === 'publicProfile');
+		assert.ok(publishes, 'the community skin no longer publishes names; revisit the hero');
+		assert.doesNotMatch(heroLine(), /\bprivate\b/i);
+	}
+);
+
+test(
+	'E35 R3: the hero joins its clauses with an em-dash and ends on a full stop',
+	{ skip: noCommunity },
+	() => {
+		const line = heroLine();
+		assert.match(line, / — /);
+		assert.doesNotMatch(line, / - /);
+		assert.doesNotMatch(line, /…|\.\.\./);
+		assert.match(line, /[a-z]\.$/);
+	}
+);
+
+test(
+	'E35 R4: the band takes its count from the platform, never from typed digits',
+	{ skip: noCommunity },
+	() => {
+		const source = read(`${COMMUNITY_REL}/copy/landing-band.md`);
+		assert.ok(source.includes(MEMBER_COUNT), 'the band carries no count token');
+		assert.doesNotMatch(source, /\d/, 'the band types a number');
+	}
+);
+
+test(
+	'E35 R5: the community landing page, read aloud top to bottom',
+	{ skip: noCommunity },
+	async () => {
+		const heroHtml = skinCopy('landing-hero', COMMUNITY);
+		const bandHtml = await withMemberCount(skinCopy('landing-band', COMMUNITY), async () => 262);
+		const server = await createViteServer({
+			server: { middlewareMode: true, watch: null, hmr: false },
+			appType: 'custom',
+			logLevel: 'silent'
+		});
+		let body: string;
+		try {
+			const { default: Landing } = await server.ssrLoadModule('/src/lib/components/Landing.svelte');
+			const { render } = await server.ssrLoadModule('svelte/server');
+			body = render(Landing, {
+				props: {
+					groupName: 'Example',
+					connectHref: '/login',
+					registerHref: '/join',
+					heroHtml,
+					bandHtml,
+					teamMembers: [
+						{ id: '1', name: 'Ada Lovelace', avatarId: null },
+						{ id: '2', name: 'Grace Hopper', avatarId: null }
+					]
+				}
+			}).body;
+		} finally {
+			await server.close();
+		}
+		const main = plainText(body.slice(body.indexOf('<main'), body.indexOf('</main>')));
+		const hero = heroLine();
+		const band = plainText(bandHtml);
+		assert.equal(
+			main.slice(main.indexOf(hero)),
+			`${hero} Login → Not yet a member? Register ${band} ` +
+				'Members AL Ada Lovelace GH Grace Hopper Login → Not yet a member? Register'
+		);
+		assert.match(band, /^Reconnect with your people\. 262 alumni and counting\. /);
+		// The two screens that were read in sequence: a hero naming who the
+		// directory is for, over names anyone can see.
+		assert.doesNotMatch(main, /\bprivate\b|…|\{memberCount\}/);
+	}
+);
 
 function cspFor(skin: string): Record<string, string[]> {
 	const out = execFileSync(
@@ -1046,15 +1224,22 @@ function cspFor(skin: string): Record<string, string[]> {
 	return JSON.parse(out);
 }
 
-test('E41 R5: the policy allows the analytics origin for a skin with an analytics block, and only then', { skip: noCommunity }, () => {
-	assert.equal(loadSkinDir(DEFAULT).skin.analytics, undefined);
-	assert.doesNotMatch(JSON.stringify(cspFor('skin/default')), /usefathom/);
-	assert.deepEqual(loadSkinDir(COMMUNITY).skin.analytics, { provider: 'fathom', site: 'ITYUHQCY' });
-	const tracked = cspFor(COMMUNITY_REL);
-	for (const d of ['script-src', 'connect-src', 'img-src']) {
-		assert.ok(tracked[d].includes('https://cdn.usefathom.com'), d);
+test(
+	'E41 R5: the policy allows the analytics origin for a skin with an analytics block, and only then',
+	{ skip: noCommunity },
+	() => {
+		assert.equal(loadSkinDir(DEFAULT).skin.analytics, undefined);
+		assert.doesNotMatch(JSON.stringify(cspFor('skin/default')), /usefathom/);
+		assert.deepEqual(loadSkinDir(COMMUNITY).skin.analytics, {
+			provider: 'fathom',
+			site: 'ITYUHQCY'
+		});
+		const tracked = cspFor(COMMUNITY_REL);
+		for (const d of ['script-src', 'connect-src', 'img-src']) {
+			assert.ok(tracked[d].includes('https://cdn.usefathom.com'), d);
+		}
 	}
-});
+);
 
 test('E41 R5: a skin cannot name an analytics provider core does not know', () => {
 	const bad = defaultYaml() + 'analytics:\n  provider: tracker\n  site: X1\n';
@@ -1214,28 +1399,32 @@ const BRANDED_FILES = [
 	)
 ];
 
-test('E42 R1: core static keeps only robots.txt, and the community skin carries every branded file', { skip: noCommunity }, () => {
-	const tracked = execFileSync('git', ['ls-files', 'static'], { cwd: ROOT, encoding: 'utf8' });
-	assert.deepEqual(tracked.trim().split('\n'), ['static/robots.txt']);
-	for (const file of BRANDED_FILES) {
-		assert.ok(existsSync(join(COMMUNITY, 'static', file)), `${COMMUNITY_REL}/static/${file}`);
+test(
+	'E42 R1: core static keeps only robots.txt, and the community skin carries every branded file',
+	{ skip: noCommunity },
+	() => {
+		const tracked = execFileSync('git', ['ls-files', 'static'], { cwd: ROOT, encoding: 'utf8' });
+		assert.deepEqual(tracked.trim().split('\n'), ['static/robots.txt']);
+		for (const file of BRANDED_FILES) {
+			assert.ok(existsSync(join(COMMUNITY, 'static', file)), `${COMMUNITY_REL}/static/${file}`);
+		}
+		// The default skin draws its own wordmark and icon rather than reusing the
+		// community's.
+		for (const file of [
+			'imgs/wordmark.svg',
+			'imgs/mark.svg',
+			'favicon.ico',
+			'apple-touch-icon.png'
+		]) {
+			assert.ok(existsSync(join(DEFAULT, 'static', file)), `skin/default/static/${file}`);
+			assert.notDeepEqual(
+				readFileSync(join(DEFAULT, 'static', file)),
+				readFileSync(join(COMMUNITY, 'static', file)),
+				`skin/default/static/${file} is the community's`
+			);
+		}
 	}
-	// The default skin draws its own wordmark and icon rather than reusing the
-	// community's.
-	for (const file of [
-		'imgs/wordmark.svg',
-		'imgs/mark.svg',
-		'favicon.ico',
-		'apple-touch-icon.png'
-	]) {
-		assert.ok(existsSync(join(DEFAULT, 'static', file)), `skin/default/static/${file}`);
-		assert.notDeepEqual(
-			readFileSync(join(DEFAULT, 'static', file)),
-			readFileSync(join(COMMUNITY, 'static', file)),
-			`skin/default/static/${file} is the community's`
-		);
-	}
-});
+);
 
 test('E42 R1: staging puts the skin static files beside core, and refuses one that takes a URL core or SvelteKit serves', (t) => {
 	const tmp = mkdtempSync(join(tmpdir(), 'skin-assets-'));
@@ -1262,13 +1451,20 @@ test('E42 R1: staging puts the skin static files beside core, and refuses one th
 	rmSync(join(skin, 'static/imgs/dropped.svg'));
 	const second = stageSkinAssets(skin, { core, out });
 	assert.notEqual(second, first);
-	assert.deepEqual(staged(second), ['imgs/wordmark.svg', 'robots.txt'], 'a dropped file is not served');
+	assert.deepEqual(
+		staged(second),
+		['imgs/wordmark.svg', 'robots.txt'],
+		'a dropped file is not served'
+	);
 	assert.deepEqual(
 		staged(first),
 		['imgs/dropped.svg', 'imgs/wordmark.svg', 'robots.txt'],
-		'a later load leaves an earlier one\'s directory alone'
+		"a later load leaves an earlier one's directory alone"
 	);
-	assert.deepEqual(readdirSync(out).sort(), [first, second].map((d) => d.slice(out.length + 1)).sort());
+	assert.deepEqual(
+		readdirSync(out).sort(),
+		[first, second].map((d) => d.slice(out.length + 1)).sort()
+	);
 	writeFileSync(join(skin, 'static/robots.txt'), 'skin');
 	assert.throws(() => stageSkinAssets(skin, { core, out }), /static\/robots\.txt: core's/);
 	rmSync(join(skin, 'static/robots.txt'));
@@ -1359,38 +1555,45 @@ const LOGO_SITES = [
 	'src/routes/group/[slug]/request/+page.svelte'
 ];
 
-test('E42 R2: every logo on a page is the skin wordmark, described by the skin display name', { skip: noCommunity }, () => {
-	for (const file of LOGO_SITES) {
-		const imgs = read(file).match(/<img\s[^>]*>/g) ?? [];
-		const logos = imgs.filter((tag) => /wordmark/.test(tag));
-		assert.equal(logos.length, 1, `${file}: ${imgs.join(' | ')}`);
-		assert.match(logos[0], /src="\/\{(?:brand|skinBrand)\.wordmark\}"/, file);
-		assert.match(logos[0], /alt=\{site\.name\}/, file);
+test(
+	'E42 R2: every logo on a page is the skin wordmark, described by the skin display name',
+	{ skip: noCommunity },
+	() => {
+		for (const file of LOGO_SITES) {
+			const imgs = read(file).match(/<img\s[^>]*>/g) ?? [];
+			const logos = imgs.filter((tag) => /wordmark/.test(tag));
+			assert.equal(logos.length, 1, `${file}: ${imgs.join(' | ')}`);
+			assert.match(logos[0], /src="\/\{(?:brand|skinBrand)\.wordmark\}"/, file);
+			assert.match(logos[0], /alt=\{site\.name\}/, file);
+		}
+		// The pages, the page head and both messages; hooks.server.ts and
+		// site-gate.ts still match these URLs by prefix, which names no file.
+		const literals = [
+			...LOGO_SITES,
+			'src/app.html',
+			'src/routes/+layout.svelte',
+			'src/lib/server/email.ts',
+			'src/lib/server/magic-link-template.ts'
+		].filter((p) => /\/imgs\/|email\/shared\/|favicon\.svg|logo\.(?:svg|png)/.test(read(p)));
+		assert.deepEqual(literals, [], 'a platform file names a logo file');
+		assert.match(
+			read('src/lib/server/email.ts'),
+			/\$\{APP_BASE_URL\}\/\$\{brand\.email_logo\}" alt="\$\{esc\(site\.name\)\}"/
+		);
+		assert.match(
+			read('src/lib/server/magic-link-template.ts'),
+			/<img src="%%BASE_URL%%\/%%EMAIL_LOGO%%" alt="%%SITE_NAME%%"/
+		);
+		assert.match(
+			read('src/routes/+layout.svelte'),
+			/<link\s+rel="icon"\s+href="\/\{brand\.mark\}"/
+		);
+		assert.match(
+			skinModuleSource(loadSkinDir(COMMUNITY)),
+			/^export const brand = \{"wordmark":"imgs\/wordmark\.svg","mark":"imgs\/mark\.svg","email_logo":"email\/shared\/logo\.png"\};$/m
+		);
 	}
-	// The pages, the page head and both messages; hooks.server.ts and
-	// site-gate.ts still match these URLs by prefix, which names no file.
-	const literals = [
-		...LOGO_SITES,
-		'src/app.html',
-		'src/routes/+layout.svelte',
-		'src/lib/server/email.ts',
-		'src/lib/server/magic-link-template.ts'
-	].filter((p) => /\/imgs\/|email\/shared\/|favicon\.svg|logo\.(?:svg|png)/.test(read(p)));
-	assert.deepEqual(literals, [], 'a platform file names a logo file');
-	assert.match(
-		read('src/lib/server/email.ts'),
-		/\$\{APP_BASE_URL\}\/\$\{brand\.email_logo\}" alt="\$\{esc\(site\.name\)\}"/
-	);
-	assert.match(
-		read('src/lib/server/magic-link-template.ts'),
-		/<img src="%%BASE_URL%%\/%%EMAIL_LOGO%%" alt="%%SITE_NAME%%"/
-	);
-	assert.match(read('src/routes/+layout.svelte'), /<link\s+rel="icon"\s+href="\/\{brand\.mark\}"/);
-	assert.match(
-		skinModuleSource(loadSkinDir(COMMUNITY)),
-		/^export const brand = \{"wordmark":"imgs\/wordmark\.svg","mark":"imgs\/mark\.svg","email_logo":"email\/shared\/logo\.png"\};$/m
-	);
-});
+);
 
 test('E42 R3: Tailwind binds the accent, its contrast, the link color and both font families to theme properties', async () => {
 	const { default: config } = await import(join(ROOT, 'tailwind.config.js'));
@@ -1437,46 +1640,58 @@ test('E42 R3: every sign-in and landing primary paints the skin accent', () => {
 	}
 });
 
-test("E42 R3: the community theme keeps today's primaries and type, and the page head and mail read the accent", { skip: noCommunity }, () => {
-	const { theme } = loadSkinDir(COMMUNITY);
-	// bg-black text-white, and dark:bg-white dark:text-black, as the sign-in
-	// buttons and both messages render them.
-	assert.deepEqual(
-		[theme.light.accent, theme.light.accentContrast, theme.dark.accent, theme.dark.accentContrast],
-		['#000000', '#ffffff', '#ffffff', '#000000']
-	);
-	const css = read(`${COMMUNITY_REL}/theme.css`).replace(/\s+/g, ' ');
-	assert.match(
-		css,
-		/--font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;/
-	);
-	assert.match(css, /--font-serif: 'Instrument Serif', Georgia, 'Times New Roman', serif;/);
-	// The server renders the light accent; the pre-paint script and the toggle
-	// rewrite it from the page's own --color-accent in whichever mode is active.
-	// scripts/e42-review-theme-runtime.test.mjs drives that in a browser.
-	assert.doesNotMatch(read('src/app.html'), /<meta name="theme-color"/);
-	assert.match(
-		read('src/routes/+layout.svelte'),
-		/<meta name="theme-color" content=\{theme\.light\.accent\} \/>/
-	);
-	const repaint =
-		/getPropertyValue\('--color-accent'\)[\s\S]*querySelector\('meta\[name="theme-color"\]'\)[\s\S]*setAttribute\('content', accent\)/;
-	const app = read('src/app.html');
-	assert.match(app, repaint);
-	assert.ok(app.indexOf('%sveltekit.head%') < app.indexOf('<script'), 'pre-paint script runs after the head');
-	const toggle = read('src/lib/components/ThemeToggle.svelte');
-	assert.match(toggle, repaint);
-	assert.match(toggle, /classList\.toggle\('dark', dark\);\s*paintThemeColor\(\);/);
-	assert.match(toggle, /onMount\(\(\) => \{[\s\S]*paintThemeColor\(\);/);
-	assert.match(
-		skinModuleSource(loadSkinDir(COMMUNITY)),
-		/^export const theme = \{"light":\{"accent":"#000000"/m
-	);
-	const template = read('src/lib/server/magic-link-template.ts');
-	assert.doesNotMatch(template, /background-color: #000|color: #(?:fff|000)\b/);
-	assert.equal((template.match(/%%ACCENT%%/g) ?? []).length, 3);
-	assert.doesNotMatch(read('src/lib/server/email.ts'), /background:#000|color:#fff/);
-});
+test(
+	"E42 R3: the community theme keeps today's primaries and type, and the page head and mail read the accent",
+	{ skip: noCommunity },
+	() => {
+		const { theme } = loadSkinDir(COMMUNITY);
+		// bg-black text-white, and dark:bg-white dark:text-black, as the sign-in
+		// buttons and both messages render them.
+		assert.deepEqual(
+			[
+				theme.light.accent,
+				theme.light.accentContrast,
+				theme.dark.accent,
+				theme.dark.accentContrast
+			],
+			['#000000', '#ffffff', '#ffffff', '#000000']
+		);
+		const css = read(`${COMMUNITY_REL}/theme.css`).replace(/\s+/g, ' ');
+		assert.match(
+			css,
+			/--font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;/
+		);
+		assert.match(css, /--font-serif: 'Instrument Serif', Georgia, 'Times New Roman', serif;/);
+		// The server renders the light accent; the pre-paint script and the toggle
+		// rewrite it from the page's own --color-accent in whichever mode is active.
+		// scripts/e42-review-theme-runtime.test.mjs drives that in a browser.
+		assert.doesNotMatch(read('src/app.html'), /<meta name="theme-color"/);
+		assert.match(
+			read('src/routes/+layout.svelte'),
+			/<meta name="theme-color" content=\{theme\.light\.accent\} \/>/
+		);
+		const repaint =
+			/getPropertyValue\('--color-accent'\)[\s\S]*querySelector\('meta\[name="theme-color"\]'\)[\s\S]*setAttribute\('content', accent\)/;
+		const app = read('src/app.html');
+		assert.match(app, repaint);
+		assert.ok(
+			app.indexOf('%sveltekit.head%') < app.indexOf('<script'),
+			'pre-paint script runs after the head'
+		);
+		const toggle = read('src/lib/components/ThemeToggle.svelte');
+		assert.match(toggle, repaint);
+		assert.match(toggle, /classList\.toggle\('dark', dark\);\s*paintThemeColor\(\);/);
+		assert.match(toggle, /onMount\(\(\) => \{[\s\S]*paintThemeColor\(\);/);
+		assert.match(
+			skinModuleSource(loadSkinDir(COMMUNITY)),
+			/^export const theme = \{"light":\{"accent":"#000000"/m
+		);
+		const template = read('src/lib/server/magic-link-template.ts');
+		assert.doesNotMatch(template, /background-color: #000|color: #(?:fff|000)\b/);
+		assert.equal((template.match(/%%ACCENT%%/g) ?? []).length, 3);
+		assert.doesNotMatch(read('src/lib/server/email.ts'), /background:#000|color:#fff/);
+	}
+);
 
 test('E42 R3: theme.css holds the named properties and nothing else, and a color is hex', (t) => {
 	const withTheme = (css: string) => {
@@ -1513,41 +1728,54 @@ test('E42 R3: theme.css holds the named properties and nothing else, and a color
 	assert.match(withTheme('a {'), /invalid CSS/);
 });
 
-test('E42 R4: @font-face is the skin that ships the face; the default ships a system stack and no font file', { skip: noCommunity }, () => {
-	assert.doesNotMatch(read('src/lib/styles/app.css'), /@font-face|Instrument Serif/);
-	const community = read(`${COMMUNITY_REL}/theme.css`);
-	assert.equal(
-		(community.match(/@font-face \{\s*font-family: 'Instrument Serif';/g) ?? []).length,
-		2
-	);
-	assert.match(community, /url\('\/fonts\/InstrumentSerif\/InstrumentSerif-Regular\.woff2'\)/);
-	const fallback = read('skin/default/theme.css');
-	assert.doesNotMatch(fallback, /@font-face|url\(/);
-	assert.match(fallback, /--font-sans: system-ui,/);
-	const fonts = filesUnder(join(DEFAULT, 'static')).filter((p) => /\.(?:ttf|otf|woff2?)$/i.test(p));
-	assert.deepEqual(fonts, []);
-});
+test(
+	'E42 R4: @font-face is the skin that ships the face; the default ships a system stack and no font file',
+	{ skip: noCommunity },
+	() => {
+		assert.doesNotMatch(read('src/lib/styles/app.css'), /@font-face|Instrument Serif/);
+		const community = read(`${COMMUNITY_REL}/theme.css`);
+		assert.equal(
+			(community.match(/@font-face \{\s*font-family: 'Instrument Serif';/g) ?? []).length,
+			2
+		);
+		assert.match(community, /url\('\/fonts\/InstrumentSerif\/InstrumentSerif-Regular\.woff2'\)/);
+		const fallback = read('skin/default/theme.css');
+		assert.doesNotMatch(fallback, /@font-face|url\(/);
+		assert.match(fallback, /--font-sans: system-ui,/);
+		const fonts = filesUnder(join(DEFAULT, 'static')).filter((p) =>
+			/\.(?:ttf|otf|woff2?)$/i.test(p)
+		);
+		assert.deepEqual(fonts, []);
+	}
+);
 
-test('E42 R5: the OFL ships beside Instrument Serif, and the MIT notice for md5.ts at the root', { skip: noCommunity }, () => {
-	const ofl = read(`${COMMUNITY_REL}/static/fonts/InstrumentSerif/OFL.txt`);
-	assert.match(
-		ofl,
-		/^Copyright 2022 The Instrument Serif Project Authors \(https:\/\/github\.com\/Instrument\/instrument-serif\)$/m
-	);
-	assert.match(ofl, /SIL OPEN FONT LICENSE Version 1\.1 - 26 February 2007/);
-	assert.match(
-		ofl,
-		/5\) The Font Software, modified or unmodified, in part or in whole,\s+must be distributed entirely under this license/
-	);
-	const notices = read('THIRD_PARTY_NOTICES.md');
-	assert.match(notices, /`src\/lib\/md5\.ts` is a TypeScript port of \[JavaScript MD5\]/);
-	assert.match(notices, /MIT License\s+Copyright © 2011 Sebastian Tschan, https:\/\/blueimp\.net/);
-	assert.match(
-		notices,
-		/The above copyright notice and this permission notice shall be included in all\s+copies or substantial portions of the Software\./
-	);
-	assert.match(read('src/lib/md5.ts'), /blueimp-md5 \(MIT/);
-});
+test(
+	'E42 R5: the OFL ships beside Instrument Serif, and the MIT notice for md5.ts at the root',
+	{ skip: noCommunity },
+	() => {
+		const ofl = read(`${COMMUNITY_REL}/static/fonts/InstrumentSerif/OFL.txt`);
+		assert.match(
+			ofl,
+			/^Copyright 2022 The Instrument Serif Project Authors \(https:\/\/github\.com\/Instrument\/instrument-serif\)$/m
+		);
+		assert.match(ofl, /SIL OPEN FONT LICENSE Version 1\.1 - 26 February 2007/);
+		assert.match(
+			ofl,
+			/5\) The Font Software, modified or unmodified, in part or in whole,\s+must be distributed entirely under this license/
+		);
+		const notices = read('THIRD_PARTY_NOTICES.md');
+		assert.match(notices, /`src\/lib\/md5\.ts` is a TypeScript port of \[JavaScript MD5\]/);
+		assert.match(
+			notices,
+			/MIT License\s+Copyright © 2011 Sebastian Tschan, https:\/\/blueimp\.net/
+		);
+		assert.match(
+			notices,
+			/The above copyright notice and this permission notice shall be included in all\s+copies or substantial portions of the Software\./
+		);
+		assert.match(read('src/lib/md5.ts'), /blueimp-md5 \(MIT/);
+	}
+);
 
 test('E42 R6: each shipped skin clears the 4.5:1 floor, accent against its contrast and against every page background', () => {
 	assert.equal(CONTRAST_FLOOR, 4.5);
@@ -1620,79 +1848,638 @@ function shippedText(file: string, tree: string): string {
 	return [...sources, ...(map.sourcesContent ?? []), ...(map.names ?? [])].join('\n');
 }
 
-test('E45: a source map is judged by what it carries, not by the checkout path its sources walk through', { skip: noCommunity }, (t) => {
-	const tree = scratch(t);
-	mkdirSync(join(tree, 'build'));
-	const map = join(tree, 'build', 'x.js.map');
-	const viaCheckout = relative(
-		join(realpathSync(tree), 'build'),
-		join(realpathSync(ROOT), 'node_modules/x/index.js')
-	);
-	writeFileSync(map, JSON.stringify({ sources: [viaCheckout], sourcesContent: ['x'], names: [] }));
-	assert.doesNotMatch(shippedText(map, tree), new RegExp(COMMUNITY_ID, 'i'));
-	writeFileSync(
-		map,
-		JSON.stringify({
-			sources: [`../skin/${COMMUNITY_ID}/copy/x.md`],
-			sourcesContent: ['x'],
-			names: []
-		})
-	);
-	assert.match(shippedText(map, tree), new RegExp(COMMUNITY_ID, 'i'));
-	writeFileSync(
-		map,
-		JSON.stringify({ sources: ['../src/x.ts'], sourcesContent: [`see ${COMMUNITY_ID}`], names: [] })
-	);
-	assert.match(shippedText(map, tree), new RegExp(COMMUNITY_ID, 'i'));
+test(
+	'E45: a source map is judged by what it carries, not by the checkout path its sources walk through',
+	{ skip: noCommunity },
+	(t) => {
+		const tree = scratch(t);
+		mkdirSync(join(tree, 'build'));
+		const map = join(tree, 'build', 'x.js.map');
+		const viaCheckout = relative(
+			join(realpathSync(tree), 'build'),
+			join(realpathSync(ROOT), 'node_modules/x/index.js')
+		);
+		writeFileSync(
+			map,
+			JSON.stringify({ sources: [viaCheckout], sourcesContent: ['x'], names: [] })
+		);
+		assert.doesNotMatch(shippedText(map, tree), new RegExp(COMMUNITY_ID, 'i'));
+		writeFileSync(
+			map,
+			JSON.stringify({
+				sources: [`../skin/${COMMUNITY_ID}/copy/x.md`],
+				sourcesContent: ['x'],
+				names: []
+			})
+		);
+		assert.match(shippedText(map, tree), new RegExp(COMMUNITY_ID, 'i'));
+		writeFileSync(
+			map,
+			JSON.stringify({
+				sources: ['../src/x.ts'],
+				sourcesContent: [`see ${COMMUNITY_ID}`],
+				names: []
+			})
+		);
+		assert.match(shippedText(map, tree), new RegExp(COMMUNITY_ID, 'i'));
+	}
+);
+
+test(
+	'E45: a source map is judged by what it carries, not by where its dependencies are installed',
+	{ skip: noCommunity },
+	(t) => {
+		const tree = scratch(t);
+		const cache = mkdtempSync(join(tmpdir(), `${COMMUNITY_ID}-dependencies-`));
+		t.after(() => rmSync(cache, { recursive: true, force: true }));
+		mkdirSync(join(cache, 'node_modules', 'x'), { recursive: true });
+		symlinkSync(join(cache, 'node_modules'), join(tree, 'node_modules'));
+		mkdirSync(join(tree, 'build'));
+		const map = join(tree, 'build', 'x.js.map');
+		const external = relative(
+			join(realpathSync(tree), 'build'),
+			join(realpathSync(cache), 'node_modules/x/index.js')
+		);
+		writeFileSync(map, JSON.stringify({ sources: [external], sourcesContent: ['x'], names: [] }));
+		assert.equal(shippedText(map, tree), ['node_modules/x/index.js', 'x'].join('\n'));
+		writeFileSync(
+			map,
+			JSON.stringify({
+				sources: [external.replace('/x/index.js', `/${COMMUNITY_ID}-theme/index.js`)],
+				sourcesContent: ['x'],
+				names: []
+			})
+		);
+		assert.match(shippedText(map, tree), new RegExp(COMMUNITY_ID, 'i'));
+		writeFileSync(
+			map,
+			JSON.stringify({ sources: [external], sourcesContent: ['x'], names: [COMMUNITY_ID] })
+		);
+		assert.match(shippedText(map, tree), new RegExp(COMMUNITY_ID, 'i'));
+	}
+);
+
+test(
+	'E42 R7: a default build names no file after the community and carries no reference to it',
+	{ skip: noCommunity },
+	async (t) => {
+		const dir = buildTree(t);
+		await viteBuild(dir, 'skin/default');
+		const files = filesUnder(join(dir, 'build'));
+		assert.ok(
+			files.some((p) => p.endsWith('/client/imgs/wordmark.svg')),
+			'the build was not found'
+		);
+		const pattern = new RegExp(COMMUNITY_ID, 'i');
+		assert.deepEqual(
+			files.filter((p) => pattern.test(p.slice(dir.length))),
+			[],
+			'a built file is named after the community'
+		);
+		assert.deepEqual(
+			files.filter((p) => pattern.test(shippedText(p, dir))),
+			[],
+			'a built file names the community'
+		);
+	}
+);
+
+// ---------------------------------------------------------------------------
+// E32: the privacy notice
+// ---------------------------------------------------------------------------
+// The notice is prose in the community skin, and every fact in it has a source
+// in this tree. These tests hold each statement to that source, so a cookie
+// lifetime, a field, a processor or a retention window that changes in code
+// fails here until the notice says the same thing. What no file in the tree can
+// prove (the host's log rotation, who reads the mailbox) is not asserted.
+
+const notice = () => read(`${COMMUNITY_REL}/copy/privacy.md`);
+const skin = () => loadSkinDir(COMMUNITY).skin;
+
+/** The body of the `## heading` section, up to the next level-2 heading. */
+function section(md: string, heading: string): string {
+	const start = md.indexOf(`\n## ${heading}\n`);
+	assert.notEqual(start, -1, `the notice has no "## ${heading}" section`);
+	const rest = md.slice(start + heading.length + 5);
+	const end = rest.search(/\n## /);
+	return end === -1 ? rest : rest.slice(0, end);
+}
+
+/** The paragraph or list item that opens with `lead`. */
+function paragraph(md: string, lead: string): string {
+	const at = md.indexOf(lead);
+	assert.notEqual(at, -1, `the notice has no paragraph opening "${lead}"`);
+	const end = md.indexOf('\n\n', at);
+	return end === -1 ? md.slice(at) : md.slice(at, end);
+}
+
+/** A number in the source, multiplied out: `60 * 60 * 24 * 365` is 31536000. */
+function constant(src: string, name: string): number {
+	const m = src.match(new RegExp(`const ${name}\\s*=\\s*([0-9_ *]+);`));
+	assert.ok(m, `no numeric const ${name}`);
+	return m[1]
+		.split('*')
+		.map((n) => Number(n.trim().replace(/_/g, '')))
+		.reduce((a, b) => a * b, 1);
+}
+
+/** The retention table's value for the row whose first cell matches `row`. */
+function retention(row: RegExp): string {
+	const line = section(notice(), 'How long it is kept')
+		.split('\n')
+		.find((l) => l.startsWith('|') && row.test(l.split('|')[1]));
+	assert.ok(line, `no retention row matching ${row}`);
+	return line.split('|')[2].trim();
+}
+
+// How the notice words each field the skin declares. A field added to the skin
+// with no entry here fails the first test, which is the point: the notice has to
+// be told about it before it ships.
+const FIELD_WORDING: Record<string, string> = {
+	firstName: 'first and last name',
+	lastName: 'first and last name',
+	email: 'email address',
+	handle: 'nickname or handle',
+	bio: 'bio',
+	contributor: 'Contributor/Volunteer',
+	fellow: 'Fellow',
+	moco: 'MoCo',
+	mofo: 'MoFo',
+	mozreps: 'MozReps',
+	mozfest: 'MozFest',
+	otherAffiliations: 'any others you type',
+	country: 'country',
+	city: 'city',
+	town: 'other place',
+	startYear: 'start and end year',
+	endYear: 'start and end year',
+	projects: 'projects',
+	companies: 'past and present organizations',
+	hobbies: 'hobbies and interests',
+	linkedin: 'LinkedIn URL',
+	publicProfile: 'whether your profile is public',
+	cellCode: 'mobile dialling code',
+	cellNumber: 'mobile dialling code and number',
+	postal: 'postal address',
+	sizeUnisex: 'unisex',
+	sizeMens: "men's",
+	sizeWomens: "women's",
+	// The stored photo URL is the photo, which members see; the notice lists the
+	// photo with the shared fields rather than its private URL copy.
+	bioPic: 'your photo'
+};
+
+test(
+	'E32 R1: the notice lists every field the skin collects, under the audience that sees it',
+	{ skip: noCommunity },
+	() => {
+		const given = section(notice(), 'What you give us');
+		const shared = paragraph(given, '**Shown to other members:**');
+		const kept = paragraph(given, '**Private:**');
+		for (const f of skin().fields) {
+			if (f.role === 'retired') continue;
+			const words = FIELD_WORDING[f.key];
+			assert.ok(words, `the skin's field "${f.key}" has no wording in the notice`);
+			const where = f.visibility === 'members' || f.role === 'avatar' ? shared : kept;
+			assert.ok(
+				where.includes(words),
+				`"${words}" (${f.key}, ${f.visibility}) is not in the notice's ${where === shared ? 'shared' : 'private'} list`
+			);
+		}
+		assert.match(kept, /Only the group's admins can see these/);
+		assert.match(kept, /used only for sending people things/);
+		// The profile page reads private fields for a group admin and nobody else.
+		assert.match(
+			read('src/routes/group/[slug]/members/[id]/+page.server.ts'),
+			/const visible = \(f: FieldDef\) => isMembersVisibleKey\(f\.key\) \|\| isGroupAdmin;/
+		);
+	}
+);
+
+test(
+	'E32 R2: the cookies the notice names are the ones the code sets, with their lifetimes and flags',
+	{ skip: noCommunity },
+	() => {
+		const visits = section(notice(), 'What the site records about visits');
+		const store = read('src/lib/server/session-store.ts');
+		const hooks = read('src/hooks.server.ts');
+		const gate = read('src/lib/server/site-gate.ts');
+		const name = (src: string, c: string) => src.match(new RegExp(`${c} = '([^']+)'`))?.[1];
+
+		const session = name(store, 'DEFAULT_SESSION_COOKIE_NAME');
+		const gateCookie = name(gate, 'GATE_COOKIE_NAME');
+		for (const c of [session, gateCookie]) {
+			assert.ok(c && visits.includes(`\`${c}\``), `cookie ${c} is not named in the notice`);
+		}
+		// E53: the two marketing cookies are gone from the code and the notice.
+		assert.doesNotMatch(hooks, /MARKETING_COOKIE_MAX_AGE|locals\.marketing/);
+		assert.doesNotMatch(notice(), /community_utm|community_cohort/);
+		assert.match(visits, /no analytics or advertising cookies/);
+		// The deployment keeps the default session cookie name.
+		assert.match(read(`${COMMUNITY_REL}/deploy/env.example`), /^# SESSION_COOKIE_NAME=/m);
+
+		assert.equal(SESSION_TTL, 24 * 60 * 60);
+		assert.match(
+			paragraph(visits, '- **Cookies.**'),
+			new RegExp(`\`${session}\` keeps you signed in, for 24 hours`)
+		);
+		assert.match(store, /httpOnly: true,/);
+		assert.match(gate, /'HttpOnly',/);
+		assert.match(visits, /Both are `HttpOnly`/);
+		assert.equal(constant(gate, 'DEFAULT_MAX_AGE'), 30 * 24 * 60 * 60);
+		assert.match(
+			visits,
+			new RegExp(`\`${gateCookie}\` remembers that you entered it, for up to 30 days`)
+		);
+
+		assert.equal(skin().analytics?.provider, 'fathom');
+		assert.match(visits, /Fathom Analytics, which counts each page view/);
+		const tag = read('src/lib/skin/analytics.js');
+		assert.match(tag, /'data-honor-dnt': 'true'/);
+		assert.match(tag, /nav\.globalPrivacyControl === true\) return null/);
+		assert.match(
+			visits,
+			/Fathom sets no cookies\. It counts nothing for a browser that sends Do Not Track, and a browser that sends Global Privacy Control never loads it/
+		);
+		// The web server log's fields are the deployment's JSON access-log format.
+		assert.match(
+			visits,
+			/your IP address, the page asked for, the response, the referring page and your browser's user agent/
+		);
+		// The application log replaces addresses and session ids before writing.
+		const redact = read('src/lib/server/redact.ts');
+		assert.match(redact, /'email',/);
+		assert.match(redact, /'sessionId',/);
+		assert.match(visits, /Email addresses and session ids are replaced by a one-way digest/);
+	}
+);
+
+test(
+	'E32 R3: the notice names all three audiences and what the public one sees',
+	{ skip: noCommunity },
+	() => {
+		const who = section(notice(), 'Who sees what');
+		assert.match(who, /three audiences/);
+		assert.match(who, /\*\*Anyone on the internet\*\* sees the public showcase/);
+		assert.match(who, /\*\*Signed-in members\*\* see the directory/);
+		assert.match(
+			who,
+			/\*\*The group's admins\*\* see everything, private fields included, and can download the roster/
+		);
+		// The showcase carries id, name and uploaded photo, nothing else.
+		assert.match(
+			who,
+			/the name and photo of each member whose profile is public, and nothing else/
+		);
+		assert.match(
+			read('src/lib/components/Landing.svelte'),
+			/teamMembers\?: \{\s*id: string;\s*name: string;\s*avatarId: string \| null;\s*\}\[\];/
+		);
+		// Export is admin-gated, and a private export is audited.
+		const exp = read('src/routes/group/[slug]/admin/export/+server.ts');
+		assert.match(exp, /requireGroupAdmin\(params, locals\)/);
+		assert.match(exp, /if \(opts\.includePrivate\) \{\s*await auditIn\(/);
+		// New registrations start private (E31); the request form writes the box.
+		assert.match(who, /registers through the request form starts with it off/);
+	}
+);
+
+test(
+	'E32 R4: the third parties listed are the ones the code and deployment send to',
+	{ skip: noCommunity },
+	() => {
+		const others = section(notice(), 'Other companies');
+		assert.match(others, /\*\*Fathom Analytics\*\*/);
+		// The server still asks Gravatar, so Automattic is listed; no browser does,
+		// which the CSP enforces by naming no Gravatar origin.
+		assert.doesNotMatch(read('svelte.config.js'), /gravatar\.com'/);
+		assert.match(others, /\*\*Automattic\*\*, which runs Gravatar/);
+		assert.match(others, /Your browser never contacts Gravatar, on any page/);
+		// How often: the scheduler's TTL, its retry after an error, the sign-in
+		// path through the same staleness check, and uploads never revalidated.
+		const gravatar = read('src/lib/server/gravatar.ts');
+		assert.equal(constant(gravatar, 'TTL_MS'), 7 * 86400 * 1000);
+		assert.match(
+			others,
+			/has no answer from Gravatar younger than seven days, its server asks, and keeps the answer for seven days/
+		);
+		assert.match(gravatar, /Left stale rather than recorded, so the next request retries/);
+		assert.match(
+			others,
+			/If Gravatar does not answer, nothing is kept and the next time the picture is shown the server asks again/
+		);
+		assert.match(gravatar, /if \(row\) scheduleRefresh\(row\)/);
+		assert.match(
+			others,
+			/Signing in starts the same check for your own picture, under the same seven-day rule/
+		);
+		assert.match(gravatar, /if \(row\.source === 'upload'\) return false;/);
+		assert.match(others, /A member who uploaded their own photo is never looked up/);
+		assert.doesNotMatch(others, /at most once a week/);
+		assert.doesNotMatch(read('src/lib/components/Gravatar.svelte'), /gravatar\.com/);
+		// Backups go to Backblaze B2, encrypted first.
+		assert.match(read(`${COMMUNITY_REL}/RUNBOOK.md`), /\| `BACKUP_RCLONE_REMOTE` \| `b2:/);
+		assert.match(
+			read('deploy/backup.sh'),
+			/^# Dump lorem-host's Postgres off the box, encrypted\./m
+		);
+		assert.match(others, /\*\*Backblaze\*\* stores the nightly backup/);
+		// Mail leaves through the operator's own relay, not Mailgun.
+		assert.match(read(`${COMMUNITY_REL}/deploy/env.example`), /^MAIL_TRANSPORT=smtp$/m);
+		assert.match(others, /No outside mail service handles them/);
+		assert.doesNotMatch(others, /Mailgun/);
+	}
+);
+
+test(
+	'E32 R5: every retention the notice states matches the code that enforces it',
+	{ skip: noCommunity },
+	() => {
+		assert.equal(retention(/Sign-in session/), `${SESSION_TTL / 3600} hours`);
+		const magic = read('src/lib/server/magic-link.ts');
+		assert.equal(retention(/Sign-in link/), `${constant(magic, 'TOKEN_TTL') / 60} minutes`);
+		// Operator decision 2026-08-18; enforced on the host, not in this tree.
+		assert.equal(retention(/logs/), '30 days');
+		assert.equal(retention(/Your profile/), 'Until you delete it');
+
+		const backup = read('deploy/backup.sh');
+		assert.match(backup, /: "\$\{BACKUP_RETENTION_DAYS:=30\}"/);
+		assert.doesNotMatch(read(`${COMMUNITY_REL}/RUNBOOK.md`), /BACKUP_RETENTION_DAYS/);
+		assert.equal(retention(/Backups/), '30 days, unless a backup fails (see below)');
+		// The prune refuses to run without a fresh dump, a failed upload stays
+		// queued, and a failed delete is a warning: none of that is a ceiling.
+		assert.match(backup, /refusing to prune/);
+		assert.match(backup, /Prune failed; dumps past the window are still on the remote/);
+		assert.match(backup, /the next run retries them/);
+		const removal = section(notice(), 'Removing yourself');
+		assert.match(removal, /which is 30 days when backups are running normally/);
+		assert.match(removal, /after a failure the oldest copies can be kept for longer than 30 days/);
+		assert.doesNotMatch(notice(), /30 days at most/);
+
+		const env = read(`${COMMUNITY_REL}/deploy/env.example`);
+		assert.doesNotMatch(env, /^AUDIT_RETENTION_DAYS/m);
+		const audit = parseAuditConfig({});
+		assert.equal(
+			retention(/Activity record/),
+			`${audit.retentionDays} days; changes to who is an admin, ${audit.retentionDaysAuthz} days`
+		);
+		// Requests are never deleted by a decision.
+		assert.match(read('src/lib/server/requests.ts'), /a decision sets status, never deletes/);
+		assert.match(retention(/membership request/), /approved or denied, until you ask/);
+	}
+);
+
+test(
+	'E32 R6: the removal route the notice points at does what the notice says',
+	{ skip: noCommunity },
+	() => {
+		const removal = section(notice(), 'Removing yourself');
+		const page = read('src/routes/group/[slug]/members/[id]/edit/+page.svelte');
+		const action = read('src/routes/group/[slug]/members/[id]/edit/+page.server.ts');
+		assert.match(page, /action="\?\/delete" use:enhance=\{enhanceDelete\}/);
+		assert.match(page, />\s*Delete profile\s*<\/button>/);
+		assert.match(removal, /use \*\*Delete profile\*\*/);
+
+		// The behavior (success only once photo and sessions are gone, a visible
+		// failure and a retry otherwise) is driven in
+		// src/routes/group/[slug]/members/[id]/edit/e32-removal.test.ts and
+		// src/lib/server/member-removal.test.ts; this holds the notice to it.
+		assert.match(action, /await removeMember\(/);
+		const steps = read('src/lib/server/member-removal.ts');
+		assert.match(steps, /await hardPurgeMember\(/);
+		assert.match(steps, /await deleteAvatar\(target\.email, db\)/);
+		assert.match(steps, /await deleteUserSessions\(subject\)/);
+		assert.match(action, /cookies\.delete\(SESSION_COOKIE_NAME/);
+		assert.match(
+			removal,
+			/If deleting the photo or ending a session fails after your profile is gone, the site says so and takes you to a page that finishes the removal when you try again/
+		);
+		assert.match(removal, /that page asks you to sign in again and then brings you back to it/);
+		assert.match(
+			read('src/routes/group/[slug]/removal/[id]/+page.server.ts'),
+			/if \(!locals\.user\) \{\s*throw redirect\(303, `\/login\?callbackUrl=\$\{encodeURIComponent\(url\.pathname\)\}`\)/
+		);
+		assert.match(
+			removal,
+			/removes your profile from the directory and the showcase, deletes your photo, ends every signed-in session you have, and signs you out/
+		);
+
+		// What outlasts it: the purge touches the member row alone and audits the
+		// deletion with the address, and no code path deletes a request row.
+		const purge = read('src/lib/server/member-write-core.ts');
+		const body = purge.slice(purge.indexOf('export async function hardPurgeMemberIn'));
+		const fn = body.slice(0, body.indexOf('\n}\n'));
+		assert.match(fn, /DELETE FROM member WHERE/);
+		assert.match(fn, /targetEmail: row\.email/);
+		assert.doesNotMatch(fn, /access_request/);
+		assert.match(
+			removal,
+			/keeps a line saying your profile was deleted, with your email address, for 90 days/
+		);
+		assert.match(removal, /your original membership request stays on file/);
+		assert.match(removal, /stays in the nightly backups until they age out/);
+	}
+);
+
+test(
+	"E32 R7: the contact is the deployment's role address, and a person reads it",
+	{ skip: noCommunity },
+	() => {
+		const address = `hello@${skin().site.domain}`;
+		// The same address core publishes as the privacy contact.
+		assert.match(read('src/lib/site.ts'), /COMPANY_PRIVACY_EMAIL = `hello@\$\{APP_APEX_DOMAIN\}`/);
+		const md = notice();
+		const named = new Set(md.match(/[\w.+-]+@[\w.-]+\.[a-z]+/g));
+		assert.deepEqual(
+			[...named],
+			[address],
+			'the notice names an address other than the role address'
+		);
+		assert.match(
+			section(md, 'Contact'),
+			/ask for a copy of what the site holds about you, to have something corrected, to have your membership request or anything else removed/
+		);
+		// The runbook records it as an alias delivered to someone who reads it.
+		const row = read(`${COMMUNITY_REL}/RUNBOOK.md`)
+			.split('\n')
+			.find((l) => l.startsWith(`| \`${address}\``));
+		assert.ok(row, `the runbook's mailbox table has no ${address}`);
+		assert.match(row, /alias →/);
+	}
+);
+
+test(
+	"E32 I3: /privacy routes to the skin's notice, and the default skin has none",
+	{ skip: noCommunity },
+	async () => {
+		assert.match(skinCopy('privacy', COMMUNITY), /^<h1>Privacy<\/h1>/);
+		assert.equal(hasSkinCopy('privacy', join(ROOT, 'skin/default')), false);
+		const { reroute } = await import('../../hooks');
+		const { DEFAULT_GROUP_SLUG } = await import('../group-nav');
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		assert.equal(
+			reroute({ url: new URL('https://x/privacy') } as any),
+			`/group/${DEFAULT_GROUP_SLUG}/privacy`
+		);
+		assert.match(read('src/routes/group/[slug]/privacy/+page.server.ts'), /skinCopy\('privacy'\)/);
+		assert.match(
+			read('src/routes/group/[slug]/+layout.server.ts'),
+			/privacy: hasSkinCopy\('privacy'\)/
+		);
+	}
+);
+
+test('E32 I1: the deployment bounds every log stream at the 30 days the notice states', () => {
+	// Container output goes to journald, whose host drop-in caps it at 30 days;
+	// json-file rotates by size, which keeps a quiet month's lines past it.
+	const compose = read('docker-compose.yml');
+	assert.match(compose, /x-journald-logging: &journald-logging\n\s+driver: journald/);
+	assert.ok((compose.match(/logging: \*journald-logging/g) ?? []).length >= 3);
+	assert.doesNotMatch(compose, /driver: json-file/);
+	const ops = section(`\n${read('docs/operations.md')}`, 'Logs');
+	assert.match(ops, /Every log this deployment writes is kept at most 30 days/);
+	assert.match(ops, /MaxRetentionSec=30day/);
+	assert.match(ops, /rotate 30\n\s+maxage 30/);
+	assert.match(ops, /that store's own retention, which has to be 30 days or less/);
+	// Every server block logs outside the host-wide 52-day rule, into the
+	// directory the 30-day logrotate rule covers.
+	const confs = ['deploy/nginx/example.conf'];
+	if (!noCommunity) {
+		for (const f of readdirSync(join(COMMUNITY, 'deploy/nginx')).filter((n) =>
+			n.endsWith('.conf')
+		)) {
+			confs.push(`${COMMUNITY_REL}/deploy/nginx/${f}`);
+		}
+	}
+	const logDir = (id: string) => `/var/log/nginx/${id}/`;
+	for (const conf of confs) {
+		const dir = logDir(conf.startsWith('deploy/') ? 'community' : COMMUNITY_ID);
+		for (const block of read(conf)
+			.split(/\nserver \{/)
+			.slice(1)) {
+			assert.ok(block.includes(`access_log ${dir}`), `${conf}: a server block logs outside ${dir}`);
+			assert.ok(
+				block.includes(`error_log  ${dir}`),
+				`${conf}: a server block logs errors outside ${dir}`
+			);
+		}
+	}
+	if (!noCommunity) assert.equal(retention(/logs/), '30 days');
 });
 
-test('E45: a source map is judged by what it carries, not by where its dependencies are installed', { skip: noCommunity }, (t) => {
-	const tree = scratch(t);
-	const cache = mkdtempSync(join(tmpdir(), `${COMMUNITY_ID}-dependencies-`));
-	t.after(() => rmSync(cache, { recursive: true, force: true }));
-	mkdirSync(join(cache, 'node_modules', 'x'), { recursive: true });
-	symlinkSync(join(cache, 'node_modules'), join(tree, 'node_modules'));
-	mkdirSync(join(tree, 'build'));
-	const map = join(tree, 'build', 'x.js.map');
-	const external = relative(
-		join(realpathSync(tree), 'build'),
-		join(realpathSync(cache), 'node_modules/x/index.js')
+test(
+	'E32 I5: /privacy renders while /terms stays a 404, by decision',
+	{ skip: noCommunity },
+	async () => {
+		const { reroute } = await import('../../hooks');
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const at = (path: string) => reroute({ url: new URL(`https://x${path}`) } as any);
+		assert.ok(at('/privacy'), '/privacy is not routed');
+		assert.match(skinCopy('privacy', COMMUNITY), /^<h1>Privacy<\/h1>/);
+		// Nothing routes /terms: no reroute entry, no route directory, no copy.
+		assert.equal(at('/terms'), undefined);
+		const routes = readdirSync(join(ROOT, 'src/routes'), { recursive: true }).map(String);
+		assert.ok(!routes.some((r) => /(^|\/)terms(\/|$)/.test(r)), 'a terms route exists');
+		for (const dir of SHIPPED)
+			assert.ok(!existsSync(join(dir, 'copy/terms.md')), `${dir} ships terms`);
+	}
+);
+
+const AUDIT_DOC = 'docs-internal/SECURITY_AUDIT_2026_08_18.md';
+test(
+	'E32 I6: D5 records the shipped notice, cites tests that exist, and claims no ceiling the code lacks',
+	{ skip: !existsSync(join(ROOT, AUDIT_DOC)) && `${AUDIT_DOC} is not in this checkout` },
+	() => {
+		const audit = read(AUDIT_DOC);
+		const d5 = audit.slice(audit.indexOf('### D5'), audit.indexOf('\n### D6'));
+		const cited = [...d5.matchAll(/`([^`]+\.test\.ts)`/g)].map((m) => m[1]);
+		assert.ok(cited.length);
+		for (const path of cited)
+			assert.ok(existsSync(join(ROOT, path)), `D5 names missing test: ${path}`);
+		assert.ok(cited.includes('src/routes/group/[slug]/members/[id]/edit/e32-removal.test.ts'));
+		assert.match(d5, /^### D5 [^\n]*\(closed/);
+		assert.doesNotMatch(d5, /enforced at neither stream|30 days at most/);
+		assert.match(d5, /maxage 30/);
+		assert.match(d5, /MaxRetentionSec=30day/);
+		assert.match(d5, /`\/terms` stays 404 by decision/);
+	}
+);
+
+test('E32 I4: the landing footer and the sidebar link the notice when the skin ships one', () => {
+	const landing = read('src/lib/components/Landing.svelte');
+	const footer = landing.slice(landing.indexOf('<footer'), landing.indexOf('</footer>'));
+	assert.match(footer, /\{#if documents\.privacy\}\s*<li>\s*<a href="\{base\}\/privacy"/);
+	assert.match(footer, /\{#if documents\.manifesto\}/);
+	assert.match(footer, /\{#if documents\.codeOfConduct\}/);
+	assert.match(
+		read('src/lib/components/Sidebar.svelte'),
+		/\{#if documents\.privacy\}\s*<a\s+href=\{`\$\{base\}\/privacy`\}/
 	);
-	writeFileSync(map, JSON.stringify({ sources: [external], sourcesContent: ['x'], names: [] }));
-	assert.equal(shippedText(map, tree), ['node_modules/x/index.js', 'x'].join('\n'));
-	writeFileSync(
-		map,
-		JSON.stringify({
-			sources: [external.replace('/x/index.js', `/${COMMUNITY_ID}-theme/index.js`)],
-			sourcesContent: ['x'],
-			names: []
-		})
-	);
-	assert.match(shippedText(map, tree), new RegExp(COMMUNITY_ID, 'i'));
-	writeFileSync(
-		map,
-		JSON.stringify({ sources: [external], sourcesContent: ['x'], names: [COMMUNITY_ID] })
-	);
-	assert.match(shippedText(map, tree), new RegExp(COMMUNITY_ID, 'i'));
 });
 
-test('E42 R7: a default build names no file after the community and carries no reference to it', { skip: noCommunity }, async (t) => {
-	const dir = buildTree(t);
-	await viteBuild(dir, 'skin/default');
-	const files = filesUnder(join(dir, 'build'));
-	assert.ok(
-		files.some((p) => p.endsWith('/client/imgs/wordmark.svg')),
-		'the build was not found'
+// ---------------------------------------------------------------------------
+// F13: field filters
+// ---------------------------------------------------------------------------
+
+const filterKeys = (dir: string) =>
+	loadSkinDir(dir)
+		.skin.fields.filter((f) => f.filter === 'exact')
+		.map((f) => f.key);
+
+test('F13 R1: filter: exact on a private field fails skin validation at boot', (t) => {
+	const dir = scratch(t, (y) =>
+		y.replace('visibility: private', 'visibility: private\n    filter: exact')
 	);
-	const pattern = new RegExp(COMMUNITY_ID, 'i');
-	assert.deepEqual(
-		files.filter((p) => pattern.test(p.slice(dir.length))),
-		[],
-		'a built file is named after the community'
+	assert.match(
+		refusal(() => loadSkinDir(dir)).message,
+		/fields\[\d+\]\.filter: found "exact" on a field with visibility private/
 	);
-	assert.deepEqual(
-		files.filter((p) => pattern.test(shippedText(p, dir))),
-		[],
-		'a built file names the community'
+});
+
+test('F13 R1: filter: exact on a field the profile shows as no single value is refused', (t) => {
+	const dir = scratch(t, (y) =>
+		y.replace('type: longtext\n', 'type: longtext\n    filter: exact\n')
 	);
+	assert.match(
+		refusal(() => loadSkinDir(dir)).message,
+		/filter: found "exact" on a longtext field/
+	);
+});
+
+test('F13 R1: filter takes only the value exact', () => {
+	const e = refusal(() =>
+		parseSkin(defaultYaml().replace('filter: exact', 'filter: substring'), 'skin.yaml')
+	);
+	assert.match(e.message, /filter: found the string "substring", expected one of exact/);
+});
+
+test('F13 R1: the default skin filters on its country and city', () => {
+	assert.deepEqual(filterKeys(DEFAULT), ['country', 'city']);
+});
+
+test(
+	'F13 R1: the community skin filters on country, city, start year and end year',
+	{ skip: noCommunity },
+	() => {
+		assert.deepEqual(filterKeys(COMMUNITY), ['country', 'city', 'startYear', 'endYear']);
+	}
+);
+
+test('F13 R7: the reference docs describe field filters, their visibility rule and the route parameters', () => {
+	const features = read('docs/features.md');
+	const directory = features.split('## Member directory')[1]?.split('\n## ')[0] ?? '';
+	assert.match(
+		directory,
+		/\*\*Search\*\*[\s\S]*\*\*Field filters\*\*/,
+		'filters not beside search'
+	);
+	assert.match(directory, /`\?country=United` does not find `United States`/);
+	assert.match(directory, /`\?startYear=2012`[^.]*started[^.]*; `\?q=2012`[^.]*spans/);
+	const route = features.split('\n').find((l) => l.startsWith('| `/members` '));
+	assert.match(route ?? '', /`\?<key>=` filters on each `filter: exact` field/);
+
+	const skin = read('docs/skin.md');
+	assert.match(skin, /\| `fields\[\]\.filter` +\| one of `exact` +\|/);
+	const section = skin.split('### Field filters')[1]?.split('\n### ')[0] ?? '';
+	assert.match(section, /refuses `filter` on a field whose `visibility` is `private`/);
 });

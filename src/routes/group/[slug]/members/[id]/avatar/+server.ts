@@ -6,10 +6,10 @@ import { normalizeAvatar } from '$lib/server/avatar-image';
 import { updateMember } from '$lib/server/member-write';
 import { actorOf } from '$lib/server/audit-core';
 import { optionalFieldByRole } from '$lib/server/field-schema';
+import { checkProfileUrl } from '$lib/server/profile-url';
 import { log } from '$lib/server/log';
+import { isUuid } from '$lib/group-nav';
 import type { RequestHandler } from './$types';
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // The photo's URL is a member field like any other, written through the same
 // transaction as a profile save, so a CSV export carries it. The id is the
@@ -27,12 +27,16 @@ async function editableMember(
 ): Promise<{ group: Group; member: Member; admin: boolean }> {
 	const group = await getGroupBySlug(params.slug);
 	if (!group) throw error(404, 'No such community');
-	if (!UUID.test(params.id)) throw error(404, 'No such member');
 	const member = await getMemberById(group.id, params.id);
 	if (!member) throw error(404, 'No such member');
 	const admin = await resolveGroupAdmin(group, locals.user ?? null);
-	if (!canEditMember(member, locals.user, admin))
+	// A username can be guessed where a uuid cannot. Reached by name, a profile
+	// the caller may not edit answers the same 404 as a name nobody holds, so these
+	// routes cannot tell a signed-in stranger which names belong to members.
+	if (!canEditMember(member, locals.user, admin)) {
+		if (!isUuid(params.id)) throw error(404, 'No such member');
 		throw error(403, 'You can only edit your own profile');
+	}
 	return { group, member, admin };
 }
 
@@ -67,6 +71,17 @@ export const POST: RequestHandler = async ({ params, locals, request, url }) => 
 	}
 	if (file.size > MAX_AVATAR_BYTES) {
 		return json({ error: 'Image must be 2 MB or smaller.' }, { status: 400 });
+	}
+	// The recorded address passes the same check as a typed one, so a site
+	// served over plain http is refused here, before the bytes are stored
+	// under a URL the member row would then refuse.
+	const recorded = AVATAR_KEY ? checkProfileUrl(`${url.origin}/avatar/x`) : null;
+	if (recorded && !recorded.ok) {
+		log.error('avatar.origin-refused', { memberId: member.id, origin: url.origin });
+		return json(
+			{ error: `This site's address ${recorded.reason}, so a photo cannot be recorded.` },
+			{ status: 500 }
+		);
 	}
 	const bytes = Buffer.from(await file.arrayBuffer());
 	if (bytes.length > MAX_AVATAR_BYTES) {

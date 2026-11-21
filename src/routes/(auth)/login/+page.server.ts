@@ -1,7 +1,9 @@
 import { redirect, fail } from '@sveltejs/kit';
 import { clientAddress } from '$lib/server/client-address';
 import { sendMagicLink } from '$lib/server/magic-link';
+import { PASSKEYS_ENABLED } from '$lib/server/passkeys';
 import { DEFAULT_DEST, safeLocalPath } from '$lib/callback-path';
+import { baseOfPath } from '$lib/group-nav';
 import type { PageServerLoad, Actions } from './$types';
 
 // The canonical sign-in page + no-JS fallback for the modal. Enter an email, get
@@ -10,7 +12,16 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 	const callbackUrl = safeLocalPath(url.searchParams.get('callbackUrl'), DEFAULT_DEST);
 	if (locals.user) throw redirect(303, callbackUrl);
 	const error = url.searchParams.get('error') || '';
-	return { callbackUrl, error };
+	// /login sits outside the group tree, so its exits follow the group the
+	// visitor was headed for.
+	const base = baseOfPath(callbackUrl);
+	return {
+		callbackUrl,
+		error,
+		home: base || '/',
+		joinHref: `${base}/join`,
+		passkeys: PASSKEYS_ENABLED
+	};
 };
 
 export const actions: Actions = {

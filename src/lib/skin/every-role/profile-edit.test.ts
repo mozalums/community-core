@@ -91,7 +91,6 @@ mock.module('$lib/server/avatars', {
 		MAX_AVATAR_BYTES: 1024
 	}
 });
-mock.module('$lib/server/gravatar', { namedExports: { gravatarHash: () => 'h' } });
 mock.module('$lib/server/session-store', {
 	namedExports: {
 		deleteSession: async () => {},
@@ -196,6 +195,64 @@ test('R7: an upload records the photo URL as the avatar field through the member
 	assert.equal(priv.photo, 'https://dir.example.org/avatar/pub-1');
 	assert.ok(log.some((t) => /INSERT INTO audit_event/.test(t)));
 	assert.equal(log.at(-1), 'COMMIT');
+});
+
+test('B30 1: an avatar upload or delete leaves an omitted URL field and its typed column alone', async () => {
+	const png = await sharp({
+		create: { width: 4, height: 4, channels: 3, background: { r: 0, g: 0, b: 0 } }
+	})
+		.png()
+		.toBuffer();
+	const cases = [
+		{ website: undefined, method: 'POST' },
+		{ website: 'javascript:alert(1)', method: 'POST' },
+		{ website: undefined, method: 'DELETE' },
+		{ website: 'javascript:alert(1)', method: 'DELETE' }
+	];
+	for (const c of cases) {
+		log = [];
+		params = [];
+		lockedRow!.linkedin = 'https://example.org/ada';
+		lockedRow!.data = { ...MEMBER.data, ...(c.website ? { website: c.website } : {}) };
+		lockedRow!.private_data = { photo: 'https://dir.example.org/avatar/pub-0' };
+		if (c.method === 'POST') {
+			const body = new FormData();
+			body.append('photo', new File([new Uint8Array(png)], 'a.png', { type: 'image/png' }));
+			const req = new Request(url, { method: 'POST', body });
+			assert.equal(
+				(await avatar.POST({ params: routeParams, locals, request: req, url } as never)).status,
+				200
+			);
+		} else {
+			assert.equal(
+				(await avatar.DELETE({ params: routeParams, locals, url } as never)).status,
+				200
+			);
+		}
+		const i = log.findIndex((t) => /^\s*UPDATE member/.test(t));
+		assert.ok(i > 0, `no member UPDATE (${JSON.stringify(c)})`);
+		assert.equal(params[i][6], 'https://example.org/ada', JSON.stringify(c));
+		assert.equal(JSON.parse(params[i][2] as string).website, c.website, JSON.stringify(c));
+	}
+});
+
+test('B30 1: an upload on a plain-http origin is refused before the bytes are stored', async () => {
+	const before = stored.length;
+	const writes = log.length;
+	const body = new FormData();
+	body.append('photo', new File([new Uint8Array([1])], 'a.png', { type: 'image/png' }));
+	const httpUrl = new URL(url.pathname, 'http://dir.example.org');
+	const req = new Request(httpUrl, { method: 'POST', body });
+	const res = await avatar.POST({
+		params: routeParams,
+		locals,
+		request: req,
+		url: httpUrl
+	} as never);
+	assert.equal(res.status, 500);
+	assert.match((await res.json()).error, /https/);
+	assert.equal(stored.length, before, 'bytes stored under a URL the row refuses');
+	assert.ok(!log.slice(writes).some((t) => /UPDATE member/.test(t)));
 });
 
 test('R7: a failed URL write fails the request instead of reporting success', async () => {

@@ -48,6 +48,12 @@ export const EXCEPTIONS: readonly Exception[] = [
 		term: CREDENTIAL,
 		reason:
 			'the log and audit redaction deny-list keeps the retired credential names, so a deployment upgraded with them still in its env file cannot leak the key into a log line'
+	},
+	{
+		path: 'scripts/e53-review-cookies.test.mjs',
+		term: spell('moza', 'lum'),
+		reason:
+			"a review's reproduction committed byte for byte; it boots the production build the review ran, and rewording it would no longer be the reproduction"
 	}
 ];
 

@@ -47,7 +47,32 @@ const tenureBounds = (c: Call) => ({
 
 const flat = (s: string) => s.replace(/\s+/g, ' ');
 const termBlocks = (sql: string) =>
-	(sql.match(/websearch_to_tsquery\('simple', \$\d+\)/g) ?? []).length;
+	(sql.match(/websearch_to_tsquery\('simple', search_unaccent\(\$\d+\)\)/g) ?? []).length;
+// The checkbox keys bound beside their labels, once per place a word's
+// checkboxes are read: matching, ranking and naming.
+const checkboxKeys = (c: Call) =>
+	boundKeys(c, /unnest\(\$(\d+)::text\[\], \$\d+::text\[\]\)(?: WITH ORDINALITY)? AS b/g);
+// Every place a word reads a checkbox, and whether that read requires the
+// box's folded label to hold the word. The key list is every visible
+// checkbox, so this gate is what keeps a word from admitting, ranking or
+// naming a box its label does not hold.
+const checkboxReads = (c: Call) =>
+	[...flat(c.sql).matchAll(/AS b\(k, label(?:, n)?\) WHERE (.{0,200})/g)].map((m) =>
+		/^lower\(btrim\(coalesce\(member\.data->>b\.k, ''\)\)\) IN \([^)]*\) AND \(?search_unaccent\(lower\(normalize\(b\.label, NFC\)\)\) ILIKE /.test(
+			m[1]
+		)
+	);
+const VISIBLE_BOXES = ['staff', 'volunteer', 'publicProfile'];
+// The key the handle trigram is bound to, wherever it is read.
+const handleTrigram = (c: Call) => [
+	...new Set(boundKeys(c, /l\.k = \$(\d+) AND coalesce\(member\.data->>l\.k, ''\) %/g))
+];
+// A word block after the first, joined by OR: each opens with its whole-word
+// test on the name column.
+const orJoined = (sql: string) =>
+	/\) OR \(\(NOT querytree\(websearch_to_tsquery\('simple', search_unaccent\(\$\d+\)\)\) = 'T' AND \(\(visible_tsv @@ websearch_to_tsquery\('simple', search_unaccent\(\$\d+\)\) AND tsvector_to_array\(to_tsvector\('simple', search_unaccent\(lower\(normalize\(coalesce\(name, ''\), NFC\)\)\)\)\)/.test(
+		flat(sql).slice(0, flat(sql).lastIndexOf('ORDER BY'))
+	);
 
 function reset(rows: (call: number) => unknown[] = () => []) {
 	calls = [];
@@ -80,7 +105,7 @@ test('a year AND-s with the words, and is kept when they are loosened', async ()
 		);
 		assert.ok(c.params.includes(2015));
 	}
-	assert.match(flat(calls[1].sql), /\) OR \( visible_tsv/, 'only the words loosen');
+	assert.ok(orJoined(calls[1].sql), 'only the words loosen');
 });
 
 test('search finds fields by role and filters no key by a deny-list', async () => {
@@ -93,19 +118,36 @@ test('search finds fields by role and filters no key by a deny-list', async () =
 	assert.doesNotMatch(sql, /!~\s*'[a-z|]+'/, 'a key is still filtered by a regex');
 	assert.doesNotMatch(sql, /postal|whatsapp|address/i);
 	assert.doesNotMatch(sql, /private_data/, 'search reached the private column');
-	assert.deepEqual(boundKeys(c, /coalesce\(member\.data->>\$(\d+), ''\) %/g), [
-		fieldByRole('handle').key
-	]);
-	const checkboxKeys = boundKeys(c, /unnest\(\$(\d+)::text\[\]\)/g);
 	assert.deepEqual(
-		checkboxKeys,
-		[['volunteer']],
-		'the word names the Volunteer checkbox by its label'
+		handleTrigram(c),
+		[],
+		'a hit on the exact pass never reached the handle trigram'
+	);
+	assert.ok(checkboxKeys(c).length > 0, 'the checkbox clause moved; point this test at it');
+	for (const keys of checkboxKeys(c)) assert.deepEqual(keys, VISIBLE_BOXES);
+	assert.deepEqual(
+		checkboxReads(c),
+		checkboxKeys(c).map(() => true),
+		'the word names a checkbox only by its label'
 	);
 });
 
-test('a word naming no checkbox binds an empty key list rather than every key', async () => {
+test('the handle trigram joins only the pass after the exact one found nobody', async () => {
+	reset((n) => (n === 0 ? [] : [{ id: 'm1', group_id: 'g', email: 'a@b.c', data: {} }]));
+	const { fuzzy } = await searchMembers('g', { q: 'carl' });
+	assert.equal(calls.length, 2);
+	assert.deepEqual(handleTrigram(calls[0]), []);
+	assert.deepEqual(handleTrigram(calls[1]), [fieldByRole('handle').key]);
+	assert.equal(fuzzy, true);
+});
+
+test('a word naming no checkbox reads every visible box only through its label', async () => {
 	reset(() => [{ id: 'm1', group_id: 'g', email: 'a@b.c', data: {} }]);
 	await searchMembers('g', { q: 'postal' });
-	assert.deepEqual(boundKeys(calls[0], /unnest\(\$(\d+)::text\[\]\)/g), [[]]);
+	assert.ok(checkboxKeys(calls[0]).length > 0, 'the checkbox clause moved; point this test at it');
+	for (const keys of checkboxKeys(calls[0])) assert.deepEqual(keys, VISIBLE_BOXES);
+	assert.deepEqual(
+		checkboxReads(calls[0]),
+		checkboxKeys(calls[0]).map(() => true)
+	);
 });

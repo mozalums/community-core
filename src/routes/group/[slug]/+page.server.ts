@@ -1,8 +1,8 @@
 import { error, redirect } from '@sveltejs/kit';
 import { getGroupBySlug } from '$lib/server/groups';
-import { listPublicMembers } from '$lib/server/members';
+import { countMembers, listPublicMembers } from '$lib/server/members';
 import { renderMarkdown } from '$lib/server/markdown';
-import { skinCopy } from '$lib/server/skin-copy';
+import { skinCopy, withMemberCount } from '$lib/server/skin-copy';
 import { groupBase } from '$lib/group-nav';
 import type { PageServerLoad } from './$types';
 
@@ -20,7 +20,7 @@ export const load: PageServerLoad = async ({ parent, params, url }) => {
 	return {
 		landingHtml: renderMarkdown(group.landingMd, { headingOffset: 1 }),
 		heroHtml: skinCopy('landing-hero'),
-		bandHtml: skinCopy('landing-band'),
+		bandHtml: await withMemberCount(skinCopy('landing-band'), () => countMembers(group.id)),
 		publicMembers: await listPublicMembers(group.id)
 	};
 };

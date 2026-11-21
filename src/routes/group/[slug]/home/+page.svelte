@@ -17,6 +17,7 @@
 <Landing
 	groupName={data.group.name}
 	{connectHref}
+	registerHref={`${base}/request`}
 	{ctaLabel}
 	showRegister={false}
 	landingHtml={data.landingHtml}
@@ -26,4 +27,5 @@
 	teamMembers={data.publicMembers}
 	{base}
 	profileBase={data.member || data.isGroupAdmin ? base : null}
+	profileRefs={data.profileRefs}
 />

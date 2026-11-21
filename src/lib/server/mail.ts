@@ -20,7 +20,10 @@ import { env } from '$env/dynamic/private';
 import { log } from '$lib/server/log';
 import { addressHeader, buildMessage, sendSmtpMail, smtpConfig } from '$lib/server/smtp';
 
-export type MailTag = 'request-notice' | 'approved' | 'login';
+export type MailTag = 'request-notice' | 'approved' | 'login' | 'email-change' | 'email-changed';
+
+// Messages whose link carries a single-use token.
+const TOKEN_TAGS: ReadonlySet<MailTag> = new Set(['login', 'email-change', 'email-changed']);
 
 export type MailMessage = {
 	/** Display name for the From: address. The address itself is the transport's. */
@@ -133,7 +136,7 @@ async function sendViaMailgun(msg: MailMessage): Promise<void> {
 		// Load-bearing on this transport alone: Mailgun rewrites links for click
 		// tracking, and a rewritten magic link is a token the confirm hop never
 		// sees. mailcow rewrites nothing, so the SMTP path carries no equivalent.
-		...(msg.tag === 'login'
+		...(TOKEN_TAGS.has(msg.tag)
 			? { 'o:tracking': 'no' as const, 'o:tracking-clicks': 'no' as const }
 			: {})
 	};

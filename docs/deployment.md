@@ -343,6 +343,28 @@ Changing `LOREM_SECRETS_DIR` means changing those paths with it. Validate with `
 
 **Docker access is root access.** `docker run -v /:/host` reads and writes the whole filesystem. Pinning `cat` and `stat` to two paths while granting `docker` in full does not contain someone who reaches this account; it records what the deploy needs. The containment that matters is the forced command on the key.
 
+## Key rotation
+
+A host holds up to four credentials, and each one is replaced the same way: put the new one in place, prove it, then remove the old one.
+
+| Credential        | Lives in                                                 | Grants                                     |
+| ----------------- | -------------------------------------------------------- | ------------------------------------------ |
+| Site deploy key   | the deploy account's `~/.ssh/`, a deploy key on the site | read the site repository                   |
+| Core deploy key   | the same `~/.ssh/`, under `Host github-core`             | read core while it is private              |
+| `DEPLOY_SSH_KEY`  | a site repository secret, and `authorized_keys` on host  | run `deploy.sh --yes` on the host, no more |
+| `CORE_READ_TOKEN` | a site repository secret                                 | CI's checkout of the site and core         |
+
+**Routine rotation keeps the deploy working throughout.** A repository accepts several deploy keys and `authorized_keys` several lines, so the old and new keys overlap:
+
+1. Make the new keypair beside the old one: `ssh-keygen -t ed25519 -f ~/.ssh/community-deploy.new -N '' -C "$(hostname) deploy $(date +%F)"`.
+2. Register the `.pub` as a deploy key with **write access off**: `gh repo deploy-key add ~/.ssh/community-deploy.new.pub --repo <owner>/<site> --title "$(hostname) $(date +%F)"`.
+3. Move the new file into place and prove it the way [first install](#first-install) does: `ssh -o BatchMode=yes -T git@github.com` names the repository, and `git push --dry-run` is refused.
+4. Remove the old key: `gh repo deploy-key list --repo <owner>/<site>` gives its id, then `gh repo deploy-key delete <id> --repo <owner>/<site>`.
+
+The core key is the same four steps against core's repository and the `github-core` alias, proven with `git -C core fetch --dry-run`. For `DEPLOY_SSH_KEY`, add the new public half to `authorized_keys` with the same forced command, set the secret with `gh secret set DEPLOY_SSH_KEY --repo <owner>/<site> < key`, push a change to `main` or re-run the last deploy job, and delete the old `authorized_keys` line once that run deploys. `CORE_READ_TOKEN` is a fine-grained token with Contents read on core and the site ([skin repository](skin-repository.md) says why both); make the new one, set the secret, re-run CI, then revoke the old token in GitHub's settings.
+
+**A leaked key is removed first.** Delete the deploy key, the `authorized_keys` line or the token before making its replacement, and accept that deploys stop until the new one is in. The overlap that keeps a routine rotation smooth is a window for whoever holds the leaked one. Then check what it could have reached: a read-only deploy key reads the repository, so assume its contents are known; a leaked `DEPLOY_SSH_KEY` could only redeploy `main`, so compare the checkout's `git reflog` on the host with the deploy runs in GitHub Actions.
+
 ## Migrations
 
 The migration step gates the deploy and runs **before** the app starts. Postgres publishes no port, so the runner has to sit on the compose network: that is the `migrate` profile in `docker-compose.yml`.
@@ -431,6 +453,7 @@ A move is [first install](#first-install) with the database restored instead of 
      It matches the launcher, the snapshot it became and every compose client, whoever started it. The freeze holds once it prints nothing on both hosts and `gh run list --workflow ci.yml --status in_progress` and `--status queued` print nothing. A deploy that never finishes is a stuck deploy to investigate on that host, not one to declare drained.
 
    Deploys stay blocked through the restore, the migration, the rebuild and the DNS move. Step 8 re-enables them on the new host alone, and CI checks on pull requests stay off until then.
+
 4. **Freeze the old writer**, on the old host. An old host without a `deploy/deploy.env` copies the example first:
 
    ```bash

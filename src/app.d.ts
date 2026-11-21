@@ -8,10 +8,6 @@ declare global {
 			sessionId: string | null;
 			session: SessionData | null;
 			user: SessionUser | null;
-			marketing: {
-				cohort: string;
-				utm: Record<string, string>;
-			};
 		}
 		interface PageData {
 			// Signed-in identity (from the magic-link session), or null.

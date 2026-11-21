@@ -33,3 +33,15 @@ export async function removeStar(
 		memberId
 	]);
 }
+
+export async function isStarred(
+	groupId: string,
+	starrer: string,
+	memberId: string
+): Promise<boolean> {
+	const { rows } = await query(
+		'SELECT 1 FROM member_star WHERE group_id = $1 AND starrer = $2 AND member_id = $3',
+		[groupId, starrer, memberId]
+	);
+	return rows.length > 0;
+}

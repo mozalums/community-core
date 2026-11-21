@@ -40,7 +40,7 @@ export const actions: Actions = {
 		// so this carries no message of its own.
 		if (!payload) return fail(400, { sent: false, error: null, email: '' });
 
-		const sessionId = await mintEmailSession(payload.email);
+		const sessionId = await mintEmailSession(payload.email, 'magic-link');
 
 		// Not awaited, and that is the point: signing in must not get slower because
 		// Gravatar is slow. Someone who just changed their picture would otherwise

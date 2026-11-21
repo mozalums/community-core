@@ -1,5 +1,5 @@
-import { error, fail } from '@sveltejs/kit';
-import { getGroupBySlug, updateLandingMd } from '$lib/server/groups';
+import { fail } from '@sveltejs/kit';
+import { updateLandingMd } from '$lib/server/groups';
 import { requireGroupAdmin } from '$lib/server/route-guards';
 import { renderMarkdown } from '$lib/server/markdown';
 import { log } from '$lib/server/log';
@@ -10,9 +10,10 @@ import type { Actions, PageServerLoad } from './$types';
 
 const MAX_LEN = 50_000;
 
-export const load: PageServerLoad = async ({ params }) => {
-	const group = await getGroupBySlug(params.slug);
-	if (!group) throw error(404, 'No such community');
+// The draft is unpublished until saved, so the load checks the grant itself;
+// the admin layout's gate does not cover a leaf-only data request.
+export const load: PageServerLoad = async ({ params, locals }) => {
+	const group = await requireGroupAdmin(params, locals);
 	const md = group.landingMd ?? '';
 	return { md, preview: renderMarkdown(md) };
 };

@@ -744,6 +744,172 @@ export const MIGRATIONS: Migration[] = [
 				DROP COLUMN IF EXISTS manifesto_md,
 				DROP COLUMN IF EXISTS code_of_conduct_md;
 		`
+	},
+	{
+		// Search folds accents on both sides. The stock unaccent() is STABLE,
+		// because it looks its dictionary up through search_path at call time,
+		// so it cannot back an index. Naming the dictionary by schema removes
+		// that lookup, which is what makes declaring the wrapper IMMUTABLE
+		// truthful. The schema is read from the catalog rather than assumed,
+		// since IF NOT EXISTS keeps wherever an earlier install put it.
+		version: 17,
+		name: 'search_unaccent',
+		sql: /* sql */ `
+			CREATE EXTENSION IF NOT EXISTS unaccent;
+
+			DO $do$
+			DECLARE
+				s text;
+			BEGIN
+				SELECT n.nspname INTO s
+				  FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace
+				 WHERE e.extname = 'unaccent';
+				EXECUTE format(
+					$f$CREATE OR REPLACE FUNCTION search_unaccent(text) RETURNS text
+					   LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT
+					   AS $body$ SELECT %1$I.unaccent(%2$L::regdictionary, $1) $body$ $f$,
+					s,
+					quote_ident(s) || '.unaccent'
+				);
+			END
+			$do$;
+		`
+	},
+	{
+		// Keyed by member, not by address: an email change rewrites the member
+		// row and never this table. `id` is the raw credential id the
+		// authenticator returns, so a sign-in finds its row without knowing who
+		// is signing in.
+		version: 18,
+		name: 'passkey_credential',
+		sql: /* sql */ `
+			CREATE TABLE IF NOT EXISTS passkey_credential (
+				id           bytea PRIMARY KEY,
+				member_id    uuid NOT NULL REFERENCES member(id) ON DELETE CASCADE,
+				public_key   bytea NOT NULL,
+				sign_count   bigint NOT NULL DEFAULT 0,
+				transports   text[] NOT NULL DEFAULT '{}',
+				backed_up    bool NOT NULL DEFAULT false,
+				device_type  text NOT NULL,
+				nickname     text NOT NULL,
+				created_at   timestamptz NOT NULL DEFAULT now(),
+				last_used_at timestamptz
+			);
+			CREATE INDEX IF NOT EXISTS passkey_credential_member_idx
+				ON passkey_credential(member_id);
+		`
+	},
+	{
+		// A member's chosen profile URL. citext, so the index refuses a second
+		// member claiming the same name in another case. A name given up stays
+		// with its owner in member_username_retired, so an old link keeps
+		// resolving and nobody else can take it over; the two tables are kept
+		// apart by the write path under the group's member-write lock, since no
+		// index spans both.
+		version: 19,
+		name: 'member_username',
+		sql: /* sql */ `
+			ALTER TABLE member ADD COLUMN IF NOT EXISTS username citext;
+			CREATE UNIQUE INDEX IF NOT EXISTS member_group_username_key
+				ON member(group_id, username);
+			CREATE TABLE IF NOT EXISTS member_username_retired (
+				group_id   uuid NOT NULL REFERENCES "group"(id) ON DELETE CASCADE,
+				username   citext NOT NULL,
+				member_id  uuid NOT NULL REFERENCES member(id) ON DELETE CASCADE,
+				retired_at timestamptz NOT NULL DEFAULT now(),
+				PRIMARY KEY (group_id, username)
+			);
+			CREATE INDEX IF NOT EXISTS member_username_retired_member_idx
+				ON member_username_retired(member_id);
+		`
+	},
+	{
+		// What makes an emailed sign-in address change or its undo link still
+		// valid when it is clicked. An address names whoever holds it at that
+		// moment, so a link that carried only addresses could move a different
+		// account that took over a freed one.
+		//
+		// identity_epoch is set from one sequence on every row of an identity
+		// each time its address moves. A change link carries the member id and
+		// epoch it was requested under, and stops working once anything moves
+		// the identity again: the change it was racing, an undo, an operator.
+		//
+		// An undo link is a row here, because undoing has to cancel the undo
+		// links issued after the change it reverses (a hijacker's second change
+		// mails one to the hijacker) while keeping the earlier ones, which go to
+		// addresses the owner held. An epoch alone cannot say "later than mine".
+		version: 20,
+		name: 'email_change_binding',
+		sql: /* sql */ `
+			ALTER TABLE member ADD COLUMN IF NOT EXISTS identity_epoch bigint NOT NULL DEFAULT 0;
+			CREATE SEQUENCE IF NOT EXISTS member_identity_epoch_seq;
+
+			CREATE TABLE IF NOT EXISTS email_revert_grant (
+				id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+				member_ids  uuid[] NOT NULL,
+				restore_to  citext NOT NULL,
+				epoch       bigint NOT NULL,
+				expires_at  timestamptz NOT NULL,
+				spent_at    timestamptz
+			);
+			CREATE INDEX IF NOT EXISTS email_revert_grant_members_idx
+				ON email_revert_grant USING gin (member_ids);
+		`
+	},
+	{
+		// An address may name one account across every group, but the schema
+		// can only say so within a group. So every write that puts an address
+		// on a member or admin row takes a shared transaction lock, and an
+		// address move takes the same lock exclusively before it checks the
+		// destination (lockMembersIn). The move then sees every claim that
+		// committed, and none can start until it commits. Triggers rather than
+		// calls in each writer, so the import, approvals, admin grants and the
+		// operator script cannot skip it. Writers take it after their group
+		// lock, as the move does, which keeps the two deadlock-free.
+		//
+		// A member row inserted at an address that an account with a live undo
+		// link holds joins that link, so the undo still reaches the membership
+		// once the rows the link was issued for are gone.
+		version: 21,
+		name: 'identity_claim_lock',
+		sql: /* sql */ `
+			CREATE OR REPLACE FUNCTION identity_claim_lock() RETURNS trigger
+			LANGUAGE plpgsql AS $$
+			BEGIN
+				PERFORM pg_advisory_xact_lock_shared(hashtextextended('identity-claim', 0));
+				RETURN NEW;
+			END $$;
+
+			DROP TRIGGER IF EXISTS member_identity_claim ON member;
+			CREATE TRIGGER member_identity_claim
+				BEFORE INSERT OR UPDATE OF email ON member
+				FOR EACH ROW EXECUTE FUNCTION identity_claim_lock();
+			DROP TRIGGER IF EXISTS group_admin_identity_claim ON group_admin;
+			CREATE TRIGGER group_admin_identity_claim
+				BEFORE INSERT OR UPDATE OF ident_subject, email ON group_admin
+				FOR EACH ROW EXECUTE FUNCTION identity_claim_lock();
+
+			CREATE OR REPLACE FUNCTION member_joins_revert_grants() RETURNS trigger
+			LANGUAGE plpgsql AS $$
+			BEGIN
+				IF NOT EXISTS (SELECT 1 FROM email_revert_grant
+				                WHERE spent_at IS NULL AND expires_at > now()) THEN
+					RETURN NULL;
+				END IF;
+				UPDATE email_revert_grant
+				   SET member_ids = array_append(member_ids, NEW.id)
+				 WHERE spent_at IS NULL AND expires_at > now()
+				   AND NOT (NEW.id = ANY(member_ids))
+				   AND member_ids && ARRAY(
+				         SELECT id FROM member WHERE email = NEW.email AND id <> NEW.id);
+				RETURN NULL;
+			END $$;
+
+			DROP TRIGGER IF EXISTS member_joins_revert_grants ON member;
+			CREATE TRIGGER member_joins_revert_grants
+				AFTER INSERT ON member
+				FOR EACH ROW EXECUTE FUNCTION member_joins_revert_grants();
+		`
 	}
 ];
 

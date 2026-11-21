@@ -88,7 +88,7 @@ function event(user: typeof ADMIN | null, form: Record<string, string>, path = '
 	const url = new URL(`http://localhost/group/${GROUP.slug}${path}`);
 	return {
 		params: { slug: GROUP.slug },
-		locals: { user, sessionId: null, session: null, marketing: { cohort: '', utm: {} } },
+		locals: { user, sessionId: null, session: null },
 		url,
 		cookies: { get: () => undefined, delete: () => {} },
 		request: new Request(url, { method: 'POST', body })

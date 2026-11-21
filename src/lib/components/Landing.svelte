@@ -7,9 +7,13 @@
 
 	type Props = {
 		groupName: string;
-		// Where "Login" / "Register" take the visitor (sign in → directory/request),
-		// from the page's state-aware logic. Both CTAs share this target.
+		// Where "Login" takes the visitor (sign in → directory/request), from the
+		// page's state-aware logic.
 		connectHref: string;
+		// Where "Register" takes the visitor: the join page for a guest, which
+		// explains the steps before it asks for an address. Never the sign-in
+		// modal, so a stranger and a returning member read different pages.
+		registerHref: string;
 		// Admin-editable Markdown (group.landing_md) rendered to HTML, shown in the
 		// intro blurb below the hero. '' leaves the blurb out.
 		landingHtml?: string;
@@ -18,7 +22,7 @@
 		heroHtml?: string;
 		bandHtml?: string;
 		// Which of the skin's documents exist, so the footer links only to those.
-		documents?: { manifesto: boolean; codeOfConduct: boolean };
+		documents?: { manifesto: boolean; codeOfConduct: boolean; privacy: boolean };
 		// When set (guest visitor), the CTAs open the sign-in modal instead of
 		// navigating; the href stays as a no-JS fallback (→ /login).
 		onLogin?: () => void;
@@ -43,6 +47,9 @@
 		// passed for viewers who can actually open profiles (community members /
 		// dash-access / admin); left null for guests, who'd be bounced to /request.
 		profileBase?: string | null;
+		// Canonical profile segment (the username) by member id, for linked
+		// avatars; a member missing from it links by id.
+		profileRefs?: Record<string, string> | null;
 		// Short commit the running image was built from, or '' when a build gave
 		// none. The footer is the only place it surfaces, so a page fetched with
 		// curl names the code serving it.
@@ -54,16 +61,18 @@
 	const {
 		groupName,
 		connectHref,
+		registerHref,
 		landingHtml = '',
 		heroHtml = '',
 		bandHtml = '',
-		documents = { manifesto: false, codeOfConduct: false },
+		documents = { manifesto: false, codeOfConduct: false, privacy: false },
 		onLogin,
 		ctaLabel = 'Login',
 		showRegister = true,
 		teamMembers = [],
 		base = '',
 		profileBase = null,
+		profileRefs = null,
 		buildSha = '',
 		coreTag = ''
 	}: Props = $props();
@@ -113,8 +122,7 @@
 			</a>
 			{#if showRegister}
 				<a
-					href={connectHref}
-					onclick={handleLogin}
+					href={registerHref}
 					class="mt-3 inline-block text-sm text-gray-600 underline underline-offset-2 dark:text-neutral-400"
 				>
 					Not yet a member? Register
@@ -154,12 +162,12 @@
 				{#each teamMembers as m (m.id)}
 					<svelte:element
 						this={linkable ? 'a' : 'div'}
-						href={linkable ? `${profileBase}/members/${m.id}` : undefined}
+						href={linkable ? `${profileBase}/members/${profileRefs?.[m.id] ?? m.id}` : undefined}
 						class="flex w-24 flex-col items-center gap-2 text-center {linkable
 							? 'transition hover:opacity-80'
 							: ''}"
 					>
-						<Gravatar hash={null} name={m.name} size={72} avatarId={m.avatarId} />
+						<Gravatar name={m.name} size={72} avatarId={m.avatarId} />
 						<p class="text-sm leading-tight">{m.name}</p>
 					</svelte:element>
 				{/each}
@@ -180,8 +188,7 @@
 				</a>
 				{#if showRegister}
 					<a
-						href={connectHref}
-						onclick={handleLogin}
+						href={registerHref}
 						class="mt-3 inline-block text-sm text-gray-600 underline underline-offset-2 dark:text-neutral-400"
 					>
 						Not yet a member? Register
@@ -192,12 +199,12 @@
 	{/if}
 </main>
 
-<!-- The page's only contentinfo landmark. Site-wide documents (privacy notice,
-     terms) belong in this list rather than in a second <footer>, which would
-     give the document two contentinfo landmarks and neither would be canonical. -->
+<!-- The page's only contentinfo landmark. Site-wide documents belong in this
+     list rather than in a second <footer>, which would give the document two
+     contentinfo landmarks and neither would be canonical. -->
 <footer class="bg-stone-100 px-6 py-12 text-black dark:bg-neutral-950 dark:text-neutral-100">
 	<div class="mx-auto flex max-w-3xl flex-col items-center gap-4 text-center">
-		{#if documents.manifesto || documents.codeOfConduct}
+		{#if documents.manifesto || documents.codeOfConduct || documents.privacy}
 			<nav aria-label="Site documents">
 				<ul class="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm">
 					{#if documents.manifesto}
@@ -212,6 +219,13 @@
 							<a
 								href="{base}/code-of-conduct"
 								class="underline underline-offset-2 hover:no-underline">Code of Conduct</a
+							>
+						</li>
+					{/if}
+					{#if documents.privacy}
+						<li>
+							<a href="{base}/privacy" class="underline underline-offset-2 hover:no-underline"
+								>Privacy</a
 							>
 						</li>
 					{/if}

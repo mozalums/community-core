@@ -217,6 +217,6 @@ test('the admin card lists the ticked affiliations first and leaves the name par
 	assert.equal(rows[0].name, 'Nomi Vance');
 	assert.deepEqual(rows[0].details, [
 		{ label: 'Associated with', value: 'Volunteer, Chess club' },
-		{ label: 'Website', value: 'https://example.org/nomi' }
+		{ label: 'Website', value: 'https://example.org/nomi', href: 'https://example.org/nomi' }
 	]);
 });

@@ -24,6 +24,7 @@
 
 import { query } from '$lib/server/postgres';
 import { md5 } from '$lib/md5';
+import type { Queryable } from '$lib/server/audit-core';
 
 export const ACCEPTED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 export const MAX_AVATAR_BYTES = 2 * 1024 * 1024; // 2 MB
@@ -192,8 +193,11 @@ export async function putAvatar(
 	return rows[0].public_id;
 }
 
-export async function deleteAvatar(email: string): Promise<void> {
-	await query('DELETE FROM member_avatar WHERE email_md5 = $1', [emailMd5(email)]);
+// `db` lets a caller already holding a pooled connection delete on it rather
+// than borrow a second one: a transaction that waits on the pool for a
+// connection while holding one deadlocks once enough of them overlap.
+export async function deleteAvatar(email: string, db: Queryable = { query }): Promise<void> {
+	await db.query('DELETE FROM member_avatar WHERE email_md5 = $1', [emailMd5(email)]);
 }
 
 // Photo URL ids for every stored avatar, keyed by the table's md5 storage key

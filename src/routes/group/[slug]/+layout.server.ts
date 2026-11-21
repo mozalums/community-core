@@ -2,8 +2,7 @@ import { error, redirect } from '@sveltejs/kit';
 import { getGroupBySlug, resolveGroupAdmin } from '$lib/server/groups';
 import { resolveMember, countMembers } from '$lib/server/members';
 import { avatarIdFor } from '$lib/server/avatars';
-import { gravatarHash } from '$lib/server/gravatar';
-import { groupBase } from '$lib/group-nav';
+import { groupBase, memberRef } from '$lib/group-nav';
 import { hasSkinCopy, skinCopy } from '$lib/server/skin-copy';
 import type { LayoutServerLoad } from './$types';
 
@@ -26,7 +25,7 @@ export const load: LayoutServerLoad = async ({ params, locals, url }) => {
 	// send them to complete their profile (edit mode, ?welcome=1 shows the
 	// "Please complete your profile" header). Fires once — the bind only happens once.
 	if (firstLogin && member) {
-		const editPath = `${groupBase(url.pathname, params.slug)}/members/${member.id}/edit`;
+		const editPath = `${groupBase(url.pathname, params.slug)}/members/${memberRef(member)}/edit`;
 		if (url.pathname !== editPath) throw redirect(303, `${editPath}?welcome=1`);
 	}
 
@@ -47,7 +46,13 @@ export const load: LayoutServerLoad = async ({ params, locals, url }) => {
 		// renders it server-side (group/+page.server.ts) and ships only HTML.
 		group: { slug: group.slug, name: group.name },
 		member: member
-			? { id: member.id, name: member.name, email: member.email, city: member.city }
+			? {
+					id: member.id,
+					ref: memberRef(member),
+					name: member.name,
+					email: member.email,
+					city: member.city
+				}
 			: null,
 		isGroupAdmin: groupAdmin,
 		// Short form only: enough to match a running deployment against a commit.
@@ -70,13 +75,11 @@ export const load: LayoutServerLoad = async ({ params, locals, url }) => {
 		// sidebar text is for the signed-in shell, so a guest's page omits it.
 		documents: {
 			manifesto: hasSkinCopy('manifesto'),
-			codeOfConduct: hasSkinCopy('code-of-conduct')
+			codeOfConduct: hasSkinCopy('code-of-conduct'),
+			privacy: hasSkinCopy('privacy')
 		},
 		sidebarHtml: user ? skinCopy('sidebar') : '',
 		userAvatarId,
-		// The sidebar's Gravatar fallback. Hashed here rather than in the component
-		// so no page hands an address to <Gravatar> — see src/lib/gravatar.ts.
-		userGravatarHash: gravatarHash(user?.email),
 		user
 	};
 };

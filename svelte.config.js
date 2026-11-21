@@ -60,10 +60,10 @@ const config = {
 		//                if a Svelte upgrade changes it, the avatar fallback is
 		//                where it shows up first.
 		//   connect-src  the analytics origin, where that tag sends its pageviews.
-		//   img-src      www.gravatar.com — /avatar/<hash> 302s there on a miss,
-		//                and CSP re-checks the redirect target, so the <img> that
-		//                pointed at our own origin still needs Gravatar allowed;
-		//                data: for the SVG control glyphs @tailwindcss/forms
+		//   img-src      no Gravatar origin: the server fetches Gravatar and
+		//                re-serves it from /avatar/<public id>, so a page that
+		//                loads an image from gravatar.com is a regression this
+		//                policy blocks rather than allows; data: for the SVG control glyphs @tailwindcss/forms
 		//                embeds in CSS; blob: for the local preview the avatar
 		//                upload builds with URL.createObjectURL; the analytics
 		//                origin because that tag's beacon transport is its own
@@ -89,7 +89,7 @@ const config = {
 					'sha256-7dQwUgLau1NFCCGjfn9FsYptB6ZtWxJin6VohGIu20I=' // "this.__e=event"
 				],
 				'style-src': ['self', 'unsafe-inline'],
-				'img-src': ['self', 'data:', 'blob:', 'https://www.gravatar.com', ...analytics],
+				'img-src': ['self', 'data:', 'blob:', ...analytics],
 				'font-src': ['self'],
 				'connect-src': ['self', ...analytics],
 				'form-action': ['self'],

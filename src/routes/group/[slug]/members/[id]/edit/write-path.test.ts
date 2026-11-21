@@ -90,7 +90,6 @@ mock.module('$lib/server/avatars', {
 		MAX_AVATAR_BYTES: 1024
 	}
 });
-mock.module('$lib/server/gravatar', { namedExports: { gravatarHash: () => 'h' } });
 mock.module('$lib/server/session-store', {
 	namedExports: {
 		deleteSession: async () => {},
@@ -229,9 +228,11 @@ test('R4: a refused save echoes only rendered fields, so a __proto__ name cannot
 });
 
 for (const key of ['__proto__', 'aff___proto__']) {
-  test(`review R4: unknown form key ${key} reaches validation`, async () => {
-    const res = await save({ ...FORM, name: 'Augusta', [key]: 'unexpected' }) as { status: number };
-    assert.equal(res.status, 400);
-    assert.ok(!log.some(t => /^\s*UPDATE member/.test(t)));
-  });
+	test(`review R4: unknown form key ${key} reaches validation`, async () => {
+		const res = (await save({ ...FORM, name: 'Augusta', [key]: 'unexpected' })) as {
+			status: number;
+		};
+		assert.equal(res.status, 400);
+		assert.ok(!log.some((t) => /^\s*UPDATE member/.test(t)));
+	});
 }

@@ -24,6 +24,7 @@ import { ROLE_CONTROLS } from '$lib/skin/schema';
 import { sendMembershipRequestNotice } from '$lib/server/email';
 import { hashId, rateLimitKey, rateLimited } from '$lib/server/rate-limit';
 import { log } from '$lib/server/log';
+import { checkProfileUrl } from '$lib/server/profile-url';
 import type { Actions, PageServerLoad } from './$types';
 
 // The form's controls have fixed names; the field each one is stored under is
@@ -120,8 +121,14 @@ export const actions: Actions = {
 		if (HAS_AFFILIATIONS && checked.length === 0 && !other) {
 			return fail(400, { error: 'Select at least one affiliation.', ...entered });
 		}
+		// Approval writes this through the profile save check, so a value it
+		// would refuse is refused here, while the requester can still fix it.
+		const linkedinUrl = LINKEDIN_KEY && linkedin ? checkProfileUrl(linkedin) : null;
+		if (linkedinUrl && !linkedinUrl.ok) {
+			return fail(400, { error: `LinkedIn URL ${linkedinUrl.reason}.`, ...entered });
+		}
 
-		if (LINKEDIN_KEY) updates[LINKEDIN_KEY] = linkedin;
+		if (LINKEDIN_KEY && linkedinUrl?.ok) updates[LINKEDIN_KEY] = linkedinUrl.url;
 		const extraByKey: Record<string, string | boolean> = {};
 		if (OTHER_AFFILIATION_KEY) extraByKey[OTHER_AFFILIATION_KEY] = other;
 		// Registering does not publish anyone: this is whatever the requester
@@ -179,7 +186,7 @@ export const actions: Actions = {
 					{ label: 'Name', value: name },
 					{ label: 'Email', value: email },
 					{ label: 'Associated with', value: summary },
-					{ label: 'LinkedIn', value: linkedin }
+					{ label: 'LinkedIn', value: linkedinUrl?.ok ? linkedinUrl.url : linkedin }
 				],
 				reviewUrl
 			});

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { COUNTRIES, DIALING_CODES, dialingCodeLabel } from './field-options';
+import * as fieldOptions from './field-options';
+import { COUNTRIES, DIALING_CODES, matchDialingCode } from './field-options';
 
 // These lists are vendored from the sheet's Lists2 tab and get re-pulled when it
 // changes. The order they arrive in is the order the dropdown shows, so the
@@ -30,17 +31,35 @@ test('countries are ordered by name', () => {
 	);
 });
 
-test('the label leads with the country, so type-ahead finds it', () => {
-	assert.equal(dialingCodeLabel('🇺🇸 +1 United States'), 'United States 🇺🇸 +1');
-	assert.equal(dialingCodeLabel('🇧🇸 +1-242 Bahamas'), 'Bahamas 🇧🇸 +1-242');
-	// Every option relabels; none falls through to the raw string.
-	const unchanged = DIALING_CODES.filter((o) => dialingCodeLabel(o) === o);
-	assert.deepEqual(unchanged, []);
-	// The label starts with the country name a member would type.
-	for (const o of DIALING_CODES) assert.ok(dialingCodeLabel(o).startsWith(countryOf(o)));
+const find = (q: string) => DIALING_CODES.filter((o) => matchDialingCode(o, q)).map(countryOf);
+
+test('E52 R2: typing finds a dialling code by country, code or digits', () => {
+	assert.deepEqual(find('uni'), ['United Arab Emirates', 'United Kingdom', 'United States']);
+	assert.deepEqual(find('UNITED K'), ['United Kingdom']);
+	assert.ok(find('+44').includes('United Kingdom'));
+	assert.ok(find('44').includes('United Kingdom'));
+	assert.ok(!find('44').includes('United States'));
+	assert.deepEqual(find('1-242'), ['Bahamas']);
+	assert.deepEqual(find('+1242'), ['Bahamas']);
+	// A word start, not any substring: "uni" is inside Tunisia and finds it not.
+	assert.ok(!find('uni').includes('Tunisia'));
 });
 
-test('a value the sheet has but the list does not is left alone', () => {
-	assert.equal(dialingCodeLabel('+1'), '+1');
-	assert.equal(dialingCodeLabel(''), '');
+test('E52 R2: matching ignores case and accents, and reaches a country by its other name', () => {
+	assert.deepEqual(find('cote'), ['Ivory Coast']);
+	assert.deepEqual(find('CÔTE d’'.replace('’', "'")), ['Ivory Coast']);
+	assert.deepEqual(find('ivory'), ['Ivory Coast']);
+});
+
+test('E52 R2: an off-list value matches by its words, and an empty query matches all', () => {
+	assert.equal(matchDialingCode('+81', '81'), true);
+	assert.equal(matchDialingCode('+81', '44'), false);
+	assert.equal(
+		DIALING_CODES.every((o) => matchDialingCode(o, '  ')),
+		true
+	);
+});
+
+test('E52 R4: options show in stored order; no country-first relabel survives', () => {
+	assert.equal('dialingCodeLabel' in fieldOptions, false);
 });

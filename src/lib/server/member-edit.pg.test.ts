@@ -13,6 +13,7 @@ const pool = url ? new pg.Pool({ connectionString: url, max: 6 }) : null;
 
 let failMemberDelete = false;
 let failAudit = false;
+let failRevoke = false;
 const revoked: string[] = [];
 
 mock.module('$lib/server/postgres', {
@@ -77,6 +78,7 @@ mock.module('$lib/server/session-store', {
 	namedExports: {
 		deleteSession: async () => {},
 		deleteUserSessions: async (subject: string) => {
+			if (failRevoke) throw new Error('redis down');
 			revoked.push(subject);
 			return 1;
 		},
@@ -89,6 +91,7 @@ const { migrate } = await import('./migrations');
 const { saveMemberProfile, readEditFields } = await import('./member-edit');
 const { getMemberById, resolveMember } = await import('./members');
 const { actions } = await import('../../routes/group/[slug]/members/[id]/edit/+page.server');
+const { purgedTarget } = await import('./member-removal');
 
 const EMAIL = 'imported@example.org';
 const USER = { id: 'u1', email: EMAIL, subject: `email:${EMAIL}`, name: 'Imported', image: '' };
@@ -109,6 +112,7 @@ before(async () => {
 beforeEach(async () => {
 	failMemberDelete = false;
 	failAudit = false;
+	failRevoke = false;
 	revoked.length = 0;
 	if (pool) await pool.query('DELETE FROM member WHERE group_id = $1', [GROUP.id]);
 });
@@ -211,6 +215,64 @@ test('a deletion removes the member and revokes their sessions', opts, async () 
 	assert.equal(out.status, 303, JSON.stringify(out));
 	assert.equal(await getMemberById(GROUP.id, id), null);
 	assert.ok(revoked.includes(`email:${EMAIL}`), 'sessions were not revoked');
+});
+
+test('E32 R6: a revocation that fails after the purge is retried from the audit row, until the address rejoins', opts, async () => {
+	const id = await imported();
+	failRevoke = true;
+	const first = await deleteAction(id);
+	assert.equal(first.status, 500);
+	assert.equal(await getMemberById(GROUP.id, id), null);
+	assert.deepEqual(await purgedTarget(GROUP.id, id), { email: EMAIL, identSubject: null });
+
+	failRevoke = false;
+	const retry = await deleteAction(id);
+	assert.equal(retry.status, 303, JSON.stringify(retry));
+	assert.ok(revoked.includes(`email:${EMAIL}`));
+
+	await imported();
+	assert.equal(await purgedTarget(GROUP.id, id), null, 'a retry would reach the new member');
+});
+
+// The completion row is written first inside the cleanup transaction, so a
+// failed INSERT leaves the requester signed in. A failure at COMMIT comes after
+// the sessions are revoked; a deferred trigger is how PostgreSQL produces one.
+test('E32 R6: a completion that fails at commit, after the sessions are gone, stays pending and reachable through sign-in', opts, async () => {
+	const removal = await import('../../routes/group/[slug]/removal/[id]/+page.server');
+	const id = await imported();
+	await pool!.query(`CREATE FUNCTION e32_commit_reject() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.action = 'member.removal-completed' THEN RAISE EXCEPTION 'commit rejected'; END IF;
+			RETURN NULL;
+		END $$`);
+	await pool!.query(`CREATE CONSTRAINT TRIGGER e32_commit_reject AFTER INSERT ON audit_event
+		DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION e32_commit_reject()`);
+	try {
+		const first = await deleteAction(id);
+		assert.equal(first.status, 500, JSON.stringify(first));
+		assert.ok(revoked.includes(`email:${EMAIL}`), 'the failure did not come after revocation');
+		assert.deepEqual(await purgedTarget(GROUP.id, id), { email: EMAIL, identSubject: null });
+
+		const path = `/group/${GROUP.slug}/removal/${id}`;
+		const view = async (user: typeof USER | null): Promise<unknown> => {
+			const url = new URL(`https://example.org${path}`);
+			try {
+				return await removal.load({ params: { slug: GROUP.slug, id }, locals: { user }, url } as never);
+			} catch (e) {
+				return e;
+			}
+		};
+		const guest = (await view(null)) as { status?: number; location?: string };
+		assert.equal(guest.status, 303);
+		assert.equal(guest.location, `/login?callbackUrl=${encodeURIComponent(path)}`);
+		assert.deepEqual(await view(USER), {}, 'signing in again does not reach recovery');
+	} finally {
+		await pool!.query('DROP TRIGGER e32_commit_reject ON audit_event');
+		await pool!.query('DROP FUNCTION e32_commit_reject()');
+	}
+	const retry = await deleteAction(id);
+	assert.equal(retry.status, 303, JSON.stringify(retry));
+	assert.equal(await purgedTarget(GROUP.id, id), null, 'the retry did not record completion');
 });
 
 async function audits(id: string) {

@@ -50,7 +50,7 @@ test('landing page offers a skip link ahead of the avatar grid', () => {
 	const skip = landing.indexOf('href="#landing-main"');
 	assert.notEqual(skip, -1, 'no skip link targeting the main landmark');
 	assert.ok(skip < landing.indexOf('<main'), 'skip link is not before <main>');
-	assert.ok(skip < landing.indexOf('Gravatar hash'), 'skip link is not before the avatar grid');
+	assert.ok(skip < landing.indexOf('<Gravatar '), 'skip link is not before the avatar grid');
 });
 
 // The page's one <h1> is the skin hero's level-1 heading; the template adds none.
@@ -88,9 +88,15 @@ test('both email inputs have a real label bound by id', () => {
 // delete a test to drop them, rather than dropping them quietly.
 test('the login input keeps its type, autocomplete and required flag', () => {
 	const input = tag(loginPage, 'id="login-email"');
-	for (const attr of ['type="email"', 'name="email"', 'required', 'autocomplete="email"']) {
+	for (const attr of ['type="email"', 'name="email"', 'required']) {
 		assert.ok(input.includes(attr), `login input lost ${attr}`);
 	}
+	// F8 makes it `username webauthn` where passkeys are on, which is how the
+	// browser offers them in autofill. Both are input purposes WCAG 1.3.5 lists.
+	assert.ok(
+		input.includes(`autocomplete={data.passkeys ? 'username webauthn' : 'email'}`),
+		'login input lost its autocomplete purpose'
+	);
 });
 
 test('every avatar image carries alt text and loads lazily', () => {

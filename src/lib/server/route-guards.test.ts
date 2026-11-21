@@ -175,7 +175,7 @@ function post(user: typeof OUTSIDER | null) {
 	const url = new URL(`http://localhost/group/${GROUP.slug}/admin`);
 	return {
 		params: { slug: GROUP.slug, id: MEMBER.id },
-		locals: { sessionId: 's-1', session: null, user, marketing: { cohort: '', utm: {} } },
+		locals: { sessionId: 's-1', session: null, user },
 		url,
 		request: new Request(url, { method: 'POST', body })
 	};

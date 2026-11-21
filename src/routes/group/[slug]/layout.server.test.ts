@@ -14,7 +14,6 @@ mock.module('$lib/server/members', {
 	namedExports: { resolveMember: async () => null, countMembers: async () => 0 }
 });
 mock.module('$lib/server/avatars', { namedExports: { avatarIdFor: async () => null } });
-mock.module('$lib/server/gravatar', { namedExports: { gravatarHash: () => null } });
 
 const { load } = await import('./+layout.server');
 

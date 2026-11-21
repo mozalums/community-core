@@ -1,7 +1,7 @@
-// The three messages this app sends. Content only: subject, bodies, recipients.
+// The messages this app sends. Content only: subject, bodies, recipients.
 // Transport — which provider, which sending domain, which credentials — belongs
-// to `mail.ts`, so adding a fourth message means composing one more object and
-// none of these three learn SMTP.
+// to `mail.ts`, so adding a message means composing one more object and none of
+// them learn SMTP.
 
 import { magicLinkEmailParts } from '$lib/server/magic-link-message';
 import { APP_BASE_URL, COMPANY_NAME, COMPANY_SUPPORT_EMAIL } from '$lib/site';
@@ -95,6 +95,64 @@ export async function sendMembershipApprovedEmail(args: {
 		html,
 		text,
 		tag: 'approved'
+	});
+}
+
+// The shared frame of the two address-change messages: logo, heading, a
+// paragraph, one button, and the same in plain text.
+function actionMessage(args: { heading: string; body: string; button: string; url: string }) {
+	const html = `<div style="font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;color:#111827;line-height:1.5;max-width:480px;margin:0 auto;text-align:center">
+<img src="${APP_BASE_URL}/${brand.email_logo}" alt="${esc(site.name)}" width="180" style="max-width:100%;margin:0 0 20px;border:0" />
+<h1 style="font-size:22px;font-weight:800;margin:0 0 8px">${esc(args.heading)}</h1>
+<p style="margin:0 0 24px;color:#374151">${esc(args.body)}</p>
+<a href="${esc(args.url)}" style="display:inline-block;background:${theme.light.accent};color:${theme.light.accentContrast};text-decoration:none;font-weight:600;padding:12px 22px;border-radius:9999px">${esc(args.button)} &rarr;</a>
+</div>`;
+	const text = `${args.heading}\n\n${args.body}\n\n${args.button}: ${args.url}\n`;
+	return { html, text };
+}
+
+/** The link that proves the member controls the address they asked to move to. */
+export async function sendEmailChangeConfirm(args: {
+	toEmail: string;
+	url: string;
+}): Promise<void> {
+	const { html, text } = actionMessage({
+		heading: 'Confirm your new sign-in email',
+		body: `Someone asked to make this address the sign-in email for their ${site.name} account. If that was you, confirm within 30 minutes. If not, ignore this message and nothing changes.`,
+		button: 'Confirm this address',
+		url: args.url
+	});
+	await sendMail({
+		fromName: mail.from_name,
+		to: [args.toEmail],
+		replyTo: COMPANY_SUPPORT_EMAIL,
+		subject: `Confirm your new sign-in email for ${site.name}`,
+		html,
+		text,
+		tag: 'email-change'
+	});
+}
+
+/** Tells the old address it no longer signs in, with seven days to undo it. */
+export async function sendEmailChangedNotice(args: {
+	toEmail: string;
+	newEmail: string;
+	revertUrl: string;
+}): Promise<void> {
+	const { html, text } = actionMessage({
+		heading: 'Your sign-in email was changed',
+		body: `Your ${site.name} account now signs in as ${args.newEmail}, and this address no longer does. If you did not make this change, undo it within 7 days: that puts this address back, signs out every session and removes the account's passkeys.`,
+		button: 'Undo this change',
+		url: args.revertUrl
+	});
+	await sendMail({
+		fromName: mail.from_name,
+		to: [args.toEmail],
+		replyTo: COMPANY_SUPPORT_EMAIL,
+		subject: `Your sign-in email for ${site.name} was changed`,
+		html,
+		text,
+		tag: 'email-changed'
 	});
 }
 

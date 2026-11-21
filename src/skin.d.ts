@@ -11,6 +11,7 @@ declare module '$skin/skin.yaml' {
 	export const mail: Skin['mail'];
 	export const brand: Skin['brand'];
 	export const analytics: Skin['analytics'];
+	export const auth: Skin['auth'];
 	export const fields: Skin['fields'];
 	export const theme: import('$lib/skin/theme').Theme;
 }

@@ -81,6 +81,20 @@ export const FIELD_TYPES = [
 // 'private': group admins only, stored apart, never searched.
 export const FIELD_VISIBILITIES = ['members', 'private'] as const;
 
+// 'exact': the directory filters on the field by its whole value
+// (`/members?<key>=<value>`), and a profile links the value to that filter.
+export const FIELD_FILTERS = ['exact'] as const;
+
+// Field types whose profile row is not one plain value: a list splits into
+// entries, a url links out, the rest are no single value at all.
+const NOT_ONE_VALUE_TYPES: readonly (typeof FIELD_TYPES)[number][] = [
+	'longtext',
+	'list',
+	'url',
+	'email',
+	'checkbox'
+];
+
 // A role is how core finds a field without knowing its key or label.
 export const FIELD_ROLES = [
 	// The member's whole name in one field. A skin has this, or the two parts.
@@ -174,6 +188,12 @@ export const SKIN_SCHEMA = object({
 			site: string({ pattern: /^[A-Za-z0-9]+$/, expect: 'a site id (letters and digits)' })
 		})
 	),
+	// Platform features a skin may switch off. Each is on when left out.
+	auth: optional(
+		object({
+			passkeys: optional(boolean())
+		})
+	),
 	fields: list(
 		object({
 			key: string({
@@ -187,7 +207,8 @@ export const SKIN_SCHEMA = object({
 			column: optional(oneOf(PROMOTED_COLUMNS)),
 			placeholder: optional(string()),
 			options: optional(oneOf(OPTION_SETS)),
-			required: optional(boolean())
+			required: optional(boolean()),
+			filter: optional(oneOf(FIELD_FILTERS))
 		})
 	)
 });
@@ -432,6 +453,25 @@ function checkFields(fields: readonly SkinField[], issues: SkinIssue[]): void {
 			expected: 'one field with options countries (the city list is the chosen country’s)'
 		});
 	}
+	// A filter answers with the members holding a value, so it may read only a
+	// value every member already sees; on a private field the result count
+	// would read the hidden value back out.
+	fields.forEach((f, i) => {
+		if (f.filter === undefined) return;
+		if (f.visibility !== 'members') {
+			issues.push({
+				path: `fields[${i}].filter`,
+				found: `"${f.filter}" on a field with visibility ${f.visibility}`,
+				expected: 'no filter key, or visibility members (a filter reads only what members see)'
+			});
+		} else if (NOT_ONE_VALUE_TYPES.includes(f.type)) {
+			issues.push({
+				path: `fields[${i}].filter`,
+				found: `"${f.filter}" on a ${f.type} field`,
+				expected: 'no filter key (the profile shows this field as no single value to filter on)'
+			});
+		}
+	});
 	// member.name is read from the fields naming that column, so a name field
 	// outside it would be stored and never shown as the member's name.
 	fields.forEach((f, i) => {

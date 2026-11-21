@@ -248,25 +248,44 @@ for (const name of ['community_utm', 'community_cohort']) {
   });
 }
 
-test('every cookie the hooks set for a guest is refused as the session cookie name', async () => {
-	// Driven from the response rather than from a list, so a cookie added to the
-	// hooks without a reservation fails here.
-	const url = new URL('https://new.example.org/?utm_source=review');
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	const event: any = {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function guestEvent(href: string, cookies: Record<string, string>): any {
+	const url = new URL(href);
+	return {
 		url,
 		request: new Request(url),
 		route: { id: '/' },
 		locals: {},
-		cookies: { get: () => undefined, delete: () => {} }
+		cookies: { get: (name: string) => cookies[name], delete: () => {} }
 	};
+}
+
+test('E53 R1: a guest arriving by a utm_ link is set no cookie', async () => {
+	const event = guestEvent('https://new.example.org/?utm_source=x', {});
 	const response = await handle({ event, resolve: async () => new Response('ok') });
-	const names = response.headers.getSetCookie().map((line) => line.slice(0, line.indexOf('=')));
-	assert.deepEqual(names.sort(), ['community_cohort', 'community_utm']);
-	for (const name of names) {
-		const message = refusal(name);
-		assert.match(message, /SESSION_COOKIE_NAME/, name);
-		assert.match(message, /already uses that cookie name/, name);
+	assert.deepEqual(response.headers.getSetCookie(), []);
+	assert.ok(!('marketing' in event.locals), 'locals.marketing is still assigned');
+});
+
+test('E53 R2: a browser holding the retired cookies is sent an expiry for each, with the attributes they were set with', async () => {
+	const event = guestEvent('https://new.example.org/', {
+		community_utm: '%7B%22utm_source%22%3A%22x%22%7D',
+		community_cohort: '202646'
+	});
+	const response = await handle({ event, resolve: async () => new Response('ok') });
+	const lines = response.headers.getSetCookie().sort();
+	assert.deepEqual(
+		lines,
+		['community_cohort', 'community_utm'].map(
+			(name) =>
+				`${name}=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=Strict; Secure`
+		)
+	);
+	// The cleanup would expire a session cookie of the same name on every
+	// response, so both names stay refused while it runs.
+	for (const line of lines) {
+		const name = line.slice(0, line.indexOf('='));
+		assert.match(refusal(name), /already uses that cookie name/, name);
 	}
 });
 
@@ -289,7 +308,7 @@ test('docs/configuration.md documents SESSION_COOKIE_NAME beside the hostname va
 		['changing the name signs everyone out', /Changing the name on a running deployment signs everyone out, once\*\*, as moving the apex does/],
 		['the first deploy signs every member out', new RegExp(`first deploy of a build carrying this variable is such a change and signs every member out once, because the default is no longer \`${LEGACY}\``)],
 		['a blank value is refused', /Only a variable that is absent takes the default/],
-		['the app\'s own cookie names are refused', /`community_gate`.*`community_utm` or `community_cohort`/]
+		['the app\'s own cookie names are refused', /`community_gate`.*`community_utm` or `community_cohort`, the two retired cookies/]
 	];
 	for (const [what, pattern] of expected) assert.match(section, pattern, what);
 

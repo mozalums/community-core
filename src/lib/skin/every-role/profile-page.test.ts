@@ -51,7 +51,7 @@ mock.module('$lib/server/members', {
 	}
 });
 mock.module('$lib/server/avatars', { namedExports: { avatarIdFor: async () => null } });
-mock.module('$lib/server/gravatar', { namedExports: { gravatarHash: () => 'h' } });
+mock.module('$lib/server/stars', { namedExports: { isStarred: async () => false } });
 
 const { load } = await import('../../../routes/group/[slug]/members/[id]/+page.server');
 const { DEFAULT_FIELD_SCHEMA } = await import('$lib/server/field-schema');

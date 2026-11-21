@@ -14,8 +14,9 @@ export const ANALYTICS_PROVIDERS = {
 	fathom: {
 		script: 'https://cdn.usefathom.com/script.js',
 		origin: 'https://cdn.usefathom.com',
-		// data-spa="auto" counts SvelteKit's client-side navigations as pageviews.
-		attributes: (site) => ({ 'data-site': site, 'data-spa': 'auto' })
+		// data-spa="auto" counts SvelteKit's client-side navigations as pageviews;
+		// data-honor-dnt has the script count nothing for a browser sending DNT.
+		attributes: (site) => ({ 'data-site': site, 'data-spa': 'auto', 'data-honor-dnt': 'true' })
 	}
 };
 
@@ -35,4 +36,19 @@ export function analyticsOrigins(analytics) {
 	return typeof provider === 'string' && Object.hasOwn(known, provider)
 		? [known[provider].origin]
 		: [];
+}
+
+/**
+ * The analytics tag's attributes for a skin's `analytics` block, or null when
+ * the skin has none or the browser sends Global Privacy Control. Fathom honors
+ * DNT itself but not GPC, so GPC is decided here, before the script loads.
+ * @param {{ provider: keyof typeof ANALYTICS_PROVIDERS, site: string } | undefined} analytics
+ * @param {object} nav `navigator`, whose DOM type does not declare `globalPrivacyControl`
+ * @returns {Record<string, string> | null}
+ */
+export function analyticsTag(analytics, nav) {
+	if (!analytics) return null;
+	if ('globalPrivacyControl' in nav && nav.globalPrivacyControl === true) return null;
+	const provider = ANALYTICS_PROVIDERS[analytics.provider];
+	return { src: provider.script, ...provider.attributes(analytics.site) };
 }

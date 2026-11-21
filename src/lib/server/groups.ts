@@ -30,8 +30,29 @@ function mapGroup(r: GroupRow): Group {
 }
 
 const GROUP_COLS = `id, slug, name, landing_md, status`;
+const IDENTITY_COLS = `id, slug, name, status`;
 
-export async function getGroupBySlug(slug: string): Promise<Group | null> {
+export type GroupIdentity = Omit<Group, 'landingMd'>;
+
+// `{ landing: false }` leaves landing_md out of the SELECT, for a caller that
+// has to resolve the group before it knows whether the requester may read it.
+export async function getGroupBySlug(slug: string): Promise<Group | null>;
+export async function getGroupBySlug(
+	slug: string,
+	opts: { landing: false }
+): Promise<GroupIdentity | null>;
+export async function getGroupBySlug(
+	slug: string,
+	opts?: { landing: false }
+): Promise<Group | GroupIdentity | null> {
+	if (opts?.landing === false) {
+		const { rows } = await query<Omit<GroupRow, 'landing_md'>>(
+			`SELECT ${IDENTITY_COLS} FROM "group" WHERE slug = $1 AND status = 'active'`,
+			[slug]
+		);
+		const r = rows[0];
+		return r ? { id: r.id, slug: r.slug, name: r.name, status: r.status } : null;
+	}
 	const { rows } = await query<GroupRow>(
 		`SELECT ${GROUP_COLS} FROM "group" WHERE slug = $1 AND status = 'active'`,
 		[slug]

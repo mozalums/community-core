@@ -85,6 +85,8 @@ The following table lists every key in the order the schema declares it. No key 
 | `analytics`            | mapping                                                                                                                                                                 | no       | none    | See the following rows.                                |
 | `analytics.provider`   | one of `fathom`                                                                                                                                                         | yes      | none    | `provider: fathom`                                     |
 | `analytics.site`       | string                                                                                                                                                                  | yes      | none    | `site: ABCDEFGH`                                       |
+| `auth`                 | mapping                                                                                                                                                                 | no       | none    | See the following rows.                                |
+| `auth.passkeys`        | boolean                                                                                                                                                                 | no       | `true`  | `passkeys: false`                                      |
 | `fields`               | list of mappings                                                                                                                                                        | yes      | none    | See the following rows.                                |
 | `fields[].key`         | string                                                                                                                                                                  | yes      | none    | `key: name`                                            |
 | `fields[].label`       | string                                                                                                                                                                  | yes      | none    | `label: Name`                                          |
@@ -95,6 +97,7 @@ The following table lists every key in the order the schema declares it. No key 
 | `fields[].placeholder` | string                                                                                                                                                                  | no       | none    | `placeholder: e.g. Lisbon`                             |
 | `fields[].options`     | one of `countries`, `cities`, `years`, `sizes`, `dialingCodes`                                                                                                          | no       | none    | `options: countries`                                   |
 | `fields[].required`    | boolean                                                                                                                                                                 | no       | none    | `required: true`                                       |
+| `fields[].filter`      | one of `exact`                                                                                                                                                          | no       | none    | `filter: exact`                                        |
 
 <!-- skin-keys:end -->
 
@@ -156,7 +159,7 @@ brand:
 
 `analytics` is optional, and the default skin sets none. Without it, no page carries an analytics script and the Content-Security-Policy allows no analytics origin, so a page makes no third-party request beyond Gravatar's avatar fallback.
 
-With it, every page loads the provider's script and the policy allows the provider's origin in `script-src`, `connect-src`, and `img-src`. Both follow from the same block at build time, so they can't disagree.
+With it, the policy allows the provider's origin in `script-src`, `connect-src`, and `img-src`, and every page loads the provider's script once it is running in the browser, unless the browser sends Global Privacy Control (`navigator.globalPrivacyControl`). The tag carries `data-honor-dnt="true"`, so Fathom counts nothing for a browser sending Do Not Track. The script and the policy follow from the same block at build time, so they can't disagree.
 
 - **`provider`** is one core knows. Core holds each provider's script URL and origin (`src/lib/skin/analytics.js`), so a skin switches analytics on but can't add an origin of its own to the policy. `fathom` loads `https://cdn.usefathom.com/script.js`.
 - **`site`** is the provider's site id, letters and digits.
@@ -168,6 +171,19 @@ analytics:
 ```
 
 The policy is fixed when the app is built, so changing the block takes a rebuild, like every other key.
+
+## Sign-in
+
+`auth` switches platform sign-in features off. Every key in it is optional and on when left out, so a skin that predates it, or leaves it out, gets every feature.
+
+- **`passkeys`** offers passkey sign-in on the login page and passkey management on a member's own profile edit page. With `false`, the passkey endpoints return 404, the login page shows no passkey control, and the edit page shows no passkey section. Passkeys already stored stay in the database and come back if the key is switched on again. The magic link works either way. See [Passkeys](features.md#passkeys).
+
+```yaml
+auth:
+  passkeys: false
+```
+
+Like every other key, it is read at build time, so changing it takes a rebuild.
 
 ## Copy
 
@@ -181,6 +197,7 @@ Long copy is Markdown in the skin's `copy` directory, rendered on the server whe
 | `affiliations-help.md` | Under the "Associated with" heading of the profile edit form. Shown only when the skin has an `affiliation` field. | No helper line.                                          |
 | `manifesto.md`         | The page at `/manifesto`, linked from the landing footer and the sidebar.                                          | `/manifesto` answers 404, and nothing links to it.       |
 | `code-of-conduct.md`   | The page at `/code-of-conduct`, linked from the landing footer and the sidebar.                                    | `/code-of-conduct` answers 404, and nothing links to it. |
+| `privacy.md`           | The page at `/privacy`, linked from the landing footer and the sidebar.                                            | `/privacy` answers 404, and nothing links to it.         |
 
 Start `landing-hero.md` with one level-1 heading and use none elsewhere; `landing-band.md` uses level 2. A `#` heading is one line. To break a heading across lines, underline it with `=` instead and end each line but the last with a backslash:
 
@@ -192,7 +209,7 @@ You're among friends.
 A private directory for the members of Example Community.
 ```
 
-A number typed into copy ("200 members") is wrong the day after someone joins. The member count the platform knows is in the sidebar.
+A number typed into copy ("200 members") is wrong the day after someone joins. Write `{memberCount}` where the number goes instead, and the page shows the group's active members, the same count as the signed-in sidebar, read on every load. Only `landing-band.md` fills it in. In any other file the token shows as typed. The count is read only when the band uses the token.
 
 ## Theme
 
@@ -262,6 +279,7 @@ Every skin's `static` must also hold `favicon.ico` and `apple-touch-icon.png`, w
 - **`placeholder`** is the hint shown in an empty form control. On the field with the role `affiliationOther` it is also the hint in the membership request form's "Other" box.
 - **`options`** turns the field's control in the profile edit form into a select over one of the built-in lists. See [Option lists](#option-lists).
 - **`required`** set to `true` makes the profile edit form refuse an empty answer and marks the label with an asterisk. Absent or `false`, the field is optional.
+- **`filter`** set to `exact` makes the field a directory filter: `/members?<key>=<value>` lists the members whose stored value for that field equals the value, and the profile links the field's value to that filter instead of to a free-text search. See [Field filters](#field-filters).
 
 A field's key never decides its control. A field keyed `startYear` or `country` that sets neither `options` nor `required` is an optional free-text input.
 
@@ -278,6 +296,24 @@ A field's key never decides its control. A field keyed `startYear` or `country` 
 A stored value that is not in its list stays selectable, so opening and saving a profile never drops it. The server stores whatever a select posts and doesn't check it against the list.
 
 The loader refuses `options` on a field with no single-line control: a `longtext`, `list`, or `checkbox` field, and a field with the role `bio`, `email`, `affiliationOther`, `avatar`, or `retired`. It refuses `required` on a `checkbox` field and on the roles `email`, `affiliationOther`, `avatar`, and `retired`. A skin has at most one `countries` field and at most one `cities` field, and a `cities` field needs a `countries` field.
+
+### Field filters
+
+A field with `filter: exact` answers "who holds this value in this field", where a free-text search answers "who mentions these words anywhere". The match is the whole stored value, case-insensitive after NFKC normalization and trimming, so `?country=United` finds nobody whose country is `United States`, and `%` and `_` match only themselves. A blank stored value matches no filter. See [Member directory](features.md#member-directory) for how filters combine with `q`.
+
+On a profile, the value of a filtered field links to `/members?<key>=<value>`. A field with `options: cities` also carries the value of the `options: countries` field when that field filters and the profile has one, so `?city=Portland&country=United%20States` does not merge two cities that share a name.
+
+The loader refuses `filter` on a field whose `visibility` is `private`, because the result count would read the hidden value back out, and on a `longtext`, `list`, `url`, `email` or `checkbox` field, which the profile shows as no single value. Core names no field key: which fields filter is this key and nothing else.
+
+```yaml
+fields:
+  - key: country
+    label: Country
+    type: text
+    visibility: members
+    options: countries
+    filter: exact
+```
 
 `required` is enforced by the browser on the profile edit form only. The server accepts an empty value for a required field, and the membership request form has its own fixed rules: it requires the name (the given name where the name is in two parts) and the `column: linkedin` field.
 

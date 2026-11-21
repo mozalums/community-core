@@ -36,12 +36,14 @@ fields:
     visibility: members
     options: countries
     required: true
+    filter: exact
   - key: city
     label: City
     type: text
     visibility: members
     column: city
     options: cities
+    filter: exact
   - key: bio
     label: Bio
     type: longtext

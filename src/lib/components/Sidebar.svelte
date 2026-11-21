@@ -12,7 +12,6 @@
 	import SignOut from '$lib/components/SignOut.svelte';
 	import { id as skinId } from '$skin/skin.yaml';
 	import { brand as skinBrand, site } from '$skin/skin.yaml';
-	import type { GravatarHash } from '$lib/gravatar';
 
 	type Props = {
 		home: string;
@@ -20,8 +19,6 @@
 		groupName: string;
 		memberCount: number;
 		userEmail: string;
-		/** md5 of the signed-in user's address, for their Gravatar. */
-		userGravatarHash: GravatarHash;
 		/** The signed-in user's uploaded photo, null when they have none. */
 		userAvatarId: string | null;
 		/** Short commit the running image was built from, '' when a build gave none. */
@@ -31,7 +28,7 @@
 		/** The skin's copy/sidebar.md, rendered; '' leaves the text out. */
 		blurbHtml?: string;
 		/** Which of the skin's documents exist, so only those are linked. */
-		documents?: { manifesto: boolean; codeOfConduct: boolean };
+		documents?: { manifesto: boolean; codeOfConduct: boolean; privacy: boolean };
 		settingsHref?: string;
 		isAdmin?: boolean;
 		mobile?: boolean;
@@ -43,12 +40,11 @@
 		groupName,
 		memberCount,
 		userEmail,
-		userGravatarHash,
 		userAvatarId,
 		buildSha = '',
 		coreTag = '',
 		blurbHtml = '',
-		documents = { manifesto: false, codeOfConduct: false },
+		documents = { manifesto: false, codeOfConduct: false, privacy: false },
 		settingsHref,
 		isAdmin = false,
 		mobile = false,
@@ -63,6 +59,7 @@
 	const onHome = $derived($page.route.id === '/group/[slug]/home');
 	const onManifesto = $derived($page.route.id === '/group/[slug]/manifesto');
 	const onCodeOfConduct = $derived($page.route.id === '/group/[slug]/code-of-conduct');
+	const onPrivacy = $derived($page.route.id === '/group/[slug]/privacy');
 </script>
 
 {#snippet brand()}
@@ -74,7 +71,9 @@
 		<img
 			src="/{skinBrand.wordmark}"
 			alt={site.name}
-			title={buildSha ? `build ${buildSha}${coreTag ? ` · core ${coreTag}` : ''} · skin ${skinId}` : undefined}
+			title={buildSha
+				? `build ${buildSha}${coreTag ? ` · core ${coreTag}` : ''} · skin ${skinId}`
+				: undefined}
 			class="h-10 w-auto dark:invert"
 		/>
 	</a>
@@ -85,7 +84,7 @@
 		class="space-y-3 text-sm leading-relaxed text-gray-600 dark:text-neutral-400 [&_a]:underline"
 	>
 		{@html blurbHtml}
-		{#if documents.manifesto || documents.codeOfConduct}
+		{#if documents.manifesto || documents.codeOfConduct || documents.privacy}
 			<div class="flex flex-col gap-1">
 				{#if documents.manifesto}
 					<a
@@ -107,6 +106,17 @@
 							: ''}"
 					>
 						Code of Conduct
+					</a>
+				{/if}
+				{#if documents.privacy}
+					<a
+						href={`${base}/privacy`}
+						onclick={onNavigate}
+						class="text-black underline underline-offset-2 hover:text-gray-600 dark:text-neutral-100 dark:hover:text-neutral-400 {onPrivacy
+							? 'font-bold'
+							: ''}"
+					>
+						Privacy
 					</a>
 				{/if}
 			</div>
@@ -240,7 +250,7 @@
 		{/if}
 
 		<div class="flex items-center gap-2 px-2 py-1.5">
-			<Gravatar hash={userGravatarHash} name={userEmail} size={32} avatarId={userAvatarId} />
+			<Gravatar name={userEmail} size={32} avatarId={userAvatarId} />
 			<span class="min-w-0 flex-1 truncate text-gray-600 dark:text-neutral-400">{userEmail}</span>
 			<SignOut
 				confirm="Log out?"

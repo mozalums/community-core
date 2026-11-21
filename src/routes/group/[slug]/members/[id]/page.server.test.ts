@@ -39,10 +39,26 @@ mock.module('$lib/server/members', {
 	}
 });
 mock.module('$lib/server/avatars', { namedExports: { avatarIdFor: async () => null } });
-mock.module('$lib/server/gravatar', { namedExports: { gravatarHash: () => 'h' } });
+
+// member_star in memory, so the load reads through the real stars.ts.
+const starRows = new Set<string>();
+mock.module('$lib/server/postgres', {
+	namedExports: {
+		query: async (text: string, values: string[]) => {
+			const key = values.slice(0, 3).join('|');
+			if (/^\s*INSERT INTO member_star/.test(text)) starRows.add(key);
+			else if (/^\s*DELETE FROM member_star/.test(text)) starRows.delete(key);
+			else if (/^\s*SELECT 1 FROM member_star/.test(text))
+				return { rows: starRows.has(key) ? [{}] : [] };
+			else throw new Error(`unexpected query: ${text}`);
+			return { rows: [] };
+		}
+	}
+});
 
 const { load } = await import('./+page.server');
 const { DEFAULT_FIELD_SCHEMA } = await import('$lib/server/field-schema');
+const { addStar, removeStar } = await import('$lib/server/stars');
 
 type Loaded = {
 	profile: { handle: string | null; bio: string | null; details: { key: string; label: string }[] };
@@ -89,4 +105,47 @@ test('R5: an admin sees the private fields, x.* columns included, and never a re
 	);
 	assert.equal(priv.find((p) => p.key === 'phone')?.value, '+44 20 7946 0000');
 	assert.equal(priv.at(-1)?.key, 'x.Badge No', 'x.* fields sort after the schema');
+});
+
+const VIEWER = { subject: 'email:viewer@example.org', email: 'viewer@example.org' };
+const starView = async (
+	user: typeof VIEWER | null,
+	access: { member?: { id: string } | null; isGroupAdmin?: boolean }
+) =>
+	(await load({
+		params: { slug: 'example', id: ID },
+		locals: { user },
+		parent: async () => ({ member: null, isGroupAdmin: false, ...access })
+	} as never)) as { starred?: boolean };
+
+test('E51 R2: a member viewer sees starred true after addStar, false after removeStar', async () => {
+	const access = { member: { id: 'viewer-row' } };
+	assert.equal((await starView(VIEWER, access)).starred, false);
+	await addStar('g', VIEWER.subject, ID);
+	assert.equal((await starView(VIEWER, access)).starred, true);
+	await removeStar('g', VIEWER.subject, ID);
+	assert.equal((await starView(VIEWER, access)).starred, false);
+});
+
+test('E51 R2: a group admin with no member row gets the star state', async () => {
+	await addStar('g', VIEWER.subject, ID);
+	assert.equal((await starView(VIEWER, { isGroupAdmin: true })).starred, true);
+	await removeStar('g', VIEWER.subject, ID);
+});
+
+test('E51 R3: a guest gets no star state at all', async () => {
+	await addStar('g', VIEWER.subject, ID);
+	assert.ok(!('starred' in (await starView(null, {}))));
+	await removeStar('g', VIEWER.subject, ID);
+});
+
+test('E51 R2: a signed-in viewer without directory access gets no star state', async () => {
+	assert.ok(!('starred' in (await starView(VIEWER, {}))));
+});
+
+test("E51 R3: the viewer's own profile carries the star, as the endpoint allows a self-star", async () => {
+	const own = { subject: 'email:ada@example.org', email: 'ada@example.org' };
+	await addStar('g', own.subject, ID);
+	assert.equal((await starView(own, { member: { id: ID } })).starred, true);
+	await removeStar('g', own.subject, ID);
 });

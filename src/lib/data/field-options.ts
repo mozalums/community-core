@@ -5,6 +5,8 @@
 // re-pull from those tabs if they change. Values are stored verbatim in the
 // sheet, so options match the sheet’s data validation exactly.
 
+import { startsWord } from '../components/combobox';
+
 export const COUNTRIES: string[] = [
 	'Afghanistan',
 	'Albania',
@@ -478,17 +480,27 @@ export const DIALING_CODES: string[] = [
 ];
 
 // The dialling-code strings are stored verbatim in the sheet and must keep
-// matching its data validation, so the list above stays exactly as the Lists2
-// tab spells it — flag, code, country. That order is unreadable in a 177-item
-// <select>: a native dropdown's type-ahead matches from the start of the label,
-// and a leading flag means typing "u" jumps nowhere. So the value goes to the
-// sheet and this goes on screen.
+// matching its data validation, so the list above stays as the Lists2 tab spells
+// it. Search reaches a country under the other names members type for it.
 const DIAL_PARTS = /^(\S+)\s+(\+[\d-]+)\s+(.+)$/;
+const DIAL_ALIASES = new Map<string, string[]>([['Ivory Coast', ["Côte d'Ivoire"]]]);
 
-/** `🇺🇸 +1 United States` → `United States 🇺🇸 +1`. Off-list values pass through. */
-export function dialingCodeLabel(option: string): string {
+/**
+ * Whether a typed query finds a dialling-code option: by the start of a word in
+ * the country name or an alias (`uni`, `cote`), or by the start of the code with
+ * or without its `+` and hyphens (`+44`, `44`, `1-242`). An option off the list
+ * matches by the start of any word in it.
+ */
+export function matchDialingCode(option: string, query: string): boolean {
+	const q = query.trim();
+	if (!q) return true;
 	const m = DIAL_PARTS.exec(option);
-	return m ? `${m[3]} ${m[1]} ${m[2]}` : option;
+	if (!m) return startsWord(option, q);
+	if (/^\+?[\d\s-]+$/.test(q)) {
+		const digits = q.replace(/\D/g, '');
+		return digits !== '' && m[2].replace(/\D/g, '').startsWith(digits);
+	}
+	return [m[3], ...(DIAL_ALIASES.get(m[3]) ?? [])].some((name) => startsWord(name, q));
 }
 
 export const CITIES_BY_COUNTRY: Record<string, string[]> = {

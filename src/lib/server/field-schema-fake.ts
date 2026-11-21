@@ -31,8 +31,10 @@ const SCHEMA_ARG = {
 	splitData: 1,
 	isMembersVisibleKey: 1,
 	membersVisibleKeys: 0,
+	filterFields: 0,
 	promotedColumns: 1,
-	promotedKeys: 1
+	promotedKeys: 1,
+	filterColumn: 1
 } as const satisfies Partial<Record<keyof typeof real, number>>;
 
 const SCHEMA_FREE: readonly (keyof typeof real)[] = [
@@ -174,6 +176,23 @@ export const PRIVATE_SEARCH_FIELDS: readonly SkinField[] = [
 	{ key: 'whatsapp', label: 'WhatsApp', type: 'checkbox', visibility: 'private' }
 ];
 
+// Every role, plus a members-visible list and a private text field, so a
+// search word can sit in a field the profile shows and in one it hides.
+export const SEARCH_MATCH_FIELDS: readonly SkinField[] = [
+	...EVERY_ROLE_FIELDS,
+	{ key: 'hobbies', label: 'Hobbies', type: 'list', visibility: 'members' },
+	{ key: 'pastime', label: 'Pastime', type: 'text', visibility: 'private' }
+];
+
+// The search fields, plus checkboxes whose labels carry accents, one
+// members-visible and one private, so an accent fold is exercised on the
+// label side as well as the query side.
+export const UNICODE_SEARCH_FIELDS: readonly SkinField[] = [
+	...SEARCH_MATCH_FIELDS,
+	{ key: 'habitue', label: 'Café habitué', type: 'checkbox', visibility: 'members' },
+	{ key: 'resident', label: 'Résident', type: 'checkbox', visibility: 'private' }
+];
+
 // Every name an ordinary object inherits that the skin's key pattern accepts,
 // each keying a field, across the control kinds. A member who stored none of
 // them must read as having stored none of them.
@@ -255,3 +274,15 @@ export const HISTORICAL_KEY_FIELDS: readonly SkinField[] = [
 	plain('quiet', { required: false })
 ];
 
+// Every role with country, city and both tenure years marked `filter: exact`,
+// plus a members-visible place field that does not filter, so a directory
+// parameter can name a filterable field, a visible one that is not, and a
+// private one.
+export const FILTER_SEARCH_FIELDS: readonly SkinField[] = [
+	...EVERY_ROLE_FIELDS.map((f) =>
+		['country', 'city', 'startYear', 'endYear'].includes(f.key)
+			? { ...f, filter: 'exact' as const }
+			: f
+	),
+	{ key: 'town', label: 'Other place', type: 'text', visibility: 'members' }
+];

@@ -21,7 +21,14 @@ import {
 	type OptionSet,
 	type PromotedColumn
 } from '$lib/server/field-schema';
-import { updateMember, type Authority, type Patch } from '$lib/server/member-write';
+import {
+	MemberWriteError,
+	setUsernameIn,
+	updateMember,
+	type Authority,
+	type Patch
+} from '$lib/server/member-write';
+import { USERNAME_CONTROL, checkUsername } from '$lib/server/usernames';
 import type { Member, MemberWithPrivate, Actor } from '$lib/server/members';
 import type { Group } from '$lib/server/groups';
 
@@ -35,6 +42,7 @@ export type EditField = {
 	placeholder?: string;
 	options?: OptionSet;
 	required?: boolean;
+	url?: boolean;
 };
 export type FieldSpec = {
 	// The field-schema key, which is also the form control's name.
@@ -53,6 +61,8 @@ export type FieldSpec = {
 	options?: OptionSet;
 	// The control refuses an empty answer.
 	required?: boolean;
+	// A `type: url` field, which the form offers as a URL input.
+	url?: boolean;
 };
 
 // The profile form's text fields, in schema order. Shared with the
@@ -66,7 +76,8 @@ export function editableFor(): FieldSpec[] {
 		bio: f.role === 'bio' || undefined,
 		placeholder: f.placeholder,
 		options: f.options,
-		required: f.required || undefined
+		required: f.required || undefined,
+		url: f.type === 'url' || undefined
 	}));
 }
 
@@ -126,7 +137,8 @@ export function readEditFields(member: MemberWithPrivate): EditField[] {
 		bio: f.bio,
 		placeholder: f.placeholder,
 		options: f.options,
-		required: f.required
+		required: f.required,
+		url: f.url
 	}));
 }
 
@@ -227,14 +239,36 @@ export function choiceEcho(u: ProfileUpdate): AffiliationState {
 }
 
 // Save a profile. Returns the number of fields actually changed. Throws
-// MemberWriteError (400 unknown or uneditable field, 403 a private field
-// without authority, 404 a member gone since the form rendered).
-export function saveMemberProfile(
+// MemberWriteError (400 unknown or uneditable field or a refused username, 403
+// a private field without authority, 404 a member gone since the form
+// rendered, 409 a username another member holds). A username, when the form
+// posted one, commits or rolls back with the rest, so a save refused for a
+// taken name changes nothing.
+export async function saveMemberProfile(
 	group: Group,
 	member: Pick<Member, 'id'>,
 	u: ProfileUpdate,
 	actor: Actor,
-	authority: Authority
+	authority: Authority,
+	username?: string
 ): Promise<number> {
-	return updateMember(group, member.id, profilePatch(u), actor, authority);
+	let next: string | null = null;
+	if (username?.trim()) {
+		const v = checkUsername(username);
+		if (!v.ok) throw new MemberWriteError(400, `Username: ${v.message}`, USERNAME_CONTROL);
+		next = v.name;
+	}
+	return updateMember(group, member.id, profilePatch(u), actor, authority, {
+		also:
+			username === undefined
+				? undefined
+				: (client) =>
+						setUsernameIn(client, {
+							group,
+							memberId: member.id,
+							next,
+							field: USERNAME_CONTROL,
+							actor
+						})
+	});
 }

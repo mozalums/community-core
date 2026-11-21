@@ -29,6 +29,7 @@ import {
 	splitData,
 	type FieldDef
 } from './field-schema';
+import { checkProfileUrl } from './profile-url';
 
 export type Client = Pick<pg.ClientBase, 'query'>;
 export type Actor = Pick<AuditEntry, 'actorSubject' | 'actorEmail'>;
@@ -42,8 +43,10 @@ export type Authority = { admin: boolean };
 
 export class MemberWriteError extends Error {
 	constructor(
-		readonly status: 400 | 403 | 404,
-		message: string
+		readonly status: 400 | 403 | 404 | 409,
+		message: string,
+		// The field the refusal is about, so a form can show it beside that control.
+		readonly field?: string
 	) {
 		super(message);
 		this.name = 'MemberWriteError';
@@ -96,10 +99,12 @@ export type ValidateOptions = {
 
 // Every key is checked, never skipped. A key the schema does not know is an
 // error rather than a silent drop, because a dropped key is how a renamed
-// column used to make a field vanish with nobody told.
-export function validatePatch(patch: Patch, opts: ValidateOptions): void {
+// column used to make a field vanish with nobody told. Returns the patch to
+// write, which differs from the input only where a URL was given its scheme.
+export function validatePatch(patch: Patch, opts: ValidateOptions): Patch {
 	const defs = fieldsFor(Object.keys(patch), opts.schema ?? DEFAULT_FIELD_SCHEMA);
 	const byKey = new Map(defs.map((f) => [f.key, f]));
+	const out: Patch = Object.assign(Object.create(null), patch);
 	for (const [key, value] of Object.entries(patch)) {
 		const f = byKey.get(key);
 		if (!f) throw new MemberWriteError(400, `unknown field "${key}"`);
@@ -112,17 +117,27 @@ export function validatePatch(patch: Patch, opts: ValidateOptions): void {
 		if (f.visibility === 'private' && !opts.mayWritePrivate) {
 			throw new MemberWriteError(403, `only an admin or the member may change "${key}"`);
 		}
+		if (f.type === 'url' && typeof value === 'string' && value.trim()) {
+			const c = checkProfileUrl(value);
+			if (!c.ok) throw new MemberWriteError(400, `${f.label} ${c.reason}`, key);
+			out[key] = c.url;
+		}
 	}
+	return out;
 }
 
 // The patch folded into the member's current values. Empty text removes the
 // key, as no stored value is ever empty. A checkbox is stored "TRUE"/"FALSE",
 // the encoding every reader already accepts, and one that reads the same as
 // its current value (an absent box reads unticked) is not a change, so a save
-// that touched nothing rewrites nothing.
+// that touched nothing rewrites nothing. A key in `exact` compares stored
+// bytes rather than trimmed text: its patch value is already normalized (a
+// checked URL), and a stored copy that only trims to it, such as one led by a
+// no-break space, does not resolve to the same place and must be replaced.
 export function computeDelta(
 	current: Record<string, unknown>,
-	patch: Patch
+	patch: Patch,
+	exact: ReadonlySet<string> = new Set()
 ): { next: Record<string, unknown>; changed: string[] } {
 	const next: Record<string, unknown> = { ...current };
 	const changed: string[] = [];
@@ -133,7 +148,7 @@ export function computeDelta(
 			next[key] = value ? 'TRUE' : 'FALSE';
 		} else {
 			const v = value.trim();
-			if (was.trim() === v) continue;
+			if ((exact.has(key) ? was : was.trim()) === v) continue;
 			if (v) next[key] = v;
 			else delete next[key];
 		}
@@ -244,14 +259,33 @@ export async function updateMemberIn(client: Client, u: UpdateInput): Promise<nu
 	const row = rows[0];
 	if (!row) throw new MemberWriteError(404, 'this profile no longer exists');
 
-	validatePatch(u.patch, {
+	const patch = validatePatch(u.patch, {
 		writer: u.writer,
 		allow: u.allow,
 		mayWritePrivate: u.authority.admin || isSelf(row, u.actor)
 	});
 
 	const current = { ...(row.private_data ?? {}), ...(row.data ?? {}) };
-	const { next, changed } = computeDelta(current, u.patch);
+	// Only URL keys the caller submitted take part. An omitted one keeps both
+	// stored copies, even where they disagree, because nothing this write was
+	// given says which is right; fieldsFor returns the whole schema, so the
+	// own-key test is what keeps an avatar write from rebuilding a website.
+	const urlKeys = fieldsFor(Object.keys(patch), DEFAULT_FIELD_SCHEMA)
+		.filter((f) => f.type === 'url' && Object.hasOwn(patch, f.key))
+		.map((f) => f.key);
+	const exact = new Set(urlKeys.filter((k) => String(patch[k]).trim() !== ''));
+	const { next, changed } = computeDelta(current, patch, exact);
+	// A typed column copied from a submitted URL field is rebuilt when its
+	// stored bytes differ from what the submission leaves, even when the JSON
+	// already matched: a checked value replaces a legacy spelling, and an
+	// explicit clear empties a column whose JSON source was already gone.
+	const rebuilt = deriveColumns(next, urlKeys, row);
+	for (const c of ['name', 'city', 'linkedin'] as const) {
+		if (rebuilt[c] === (row[c] ?? null)) continue;
+		for (const k of promotedKeys(c, DEFAULT_FIELD_SCHEMA)) {
+			if (urlKeys.includes(k) && !changed.includes(k)) changed.push(k);
+		}
+	}
 	if (!changed.length) return 0;
 
 	const typed = deriveColumns(next, changed, row);
@@ -292,8 +326,8 @@ export type CreateInput = Common & {
 // back; a removed one is reactivated with these values.
 export async function createMemberIn(client: Client, c: CreateInput): Promise<string | null> {
 	await client.query(GROUP_LOCK_SQL, [c.group.id]);
-	validatePatch(c.values, { writer: 'system', mayWritePrivate: true });
-	const next = encodeValues(c.values);
+	const values = validatePatch(c.values, { writer: 'system', mayWritePrivate: true });
+	const next = encodeValues(values);
 	const changed = Object.keys(next);
 	const typed = deriveColumns(next, changed);
 	const stored = splitData(next);
@@ -524,6 +558,129 @@ export async function hardPurgeMemberIn(client: Client, r: RemoveInput): Promise
 		targetEmail: row.email,
 		targetSubject: row.ident_subject,
 		targetId: r.memberId
+	});
+	return true;
+}
+
+// The sign-in address change (email-change-core.ts) moves one person's rows in
+// several groups at once. Group locks first and in id order, then the rows, so
+// it orders against saves and imports the way they order against each other,
+// and two moves cannot deadlock. Then the identity lock, exclusively: every
+// write that claims an address holds it shared (migration 21's triggers), so
+// from here until commit no row anywhere can take or join an address.
+const IDENTITY_MOVE_LOCK_SQL = `SELECT pg_advisory_xact_lock(hashtextextended('identity-claim', 0))`;
+export async function lockMembersIn(
+	client: Client,
+	memberIds: readonly string[]
+): Promise<{ id: string; group_id: string; email: string }[]> {
+	const { rows: groups } = await client.query<{ group_id: string }>(
+		`SELECT DISTINCT group_id FROM member WHERE id = ANY($1::uuid[]) ORDER BY group_id`,
+		[memberIds]
+	);
+	for (const g of groups) await client.query(GROUP_LOCK_SQL, [g.group_id]);
+	await client.query(IDENTITY_MOVE_LOCK_SQL);
+	const { rows } = await client.query<{ id: string; group_id: string; email: string }>(
+		`SELECT id, group_id, email::text AS email FROM member
+		  WHERE id = ANY($1::uuid[]) ORDER BY id FOR UPDATE`,
+		[memberIds]
+	);
+	return rows;
+}
+
+// Audited by the caller, which records one change per group with both addresses.
+// Returns the rows' new identity_epoch, one value for the whole account.
+export async function setAddressIn(
+	client: Client,
+	memberIds: readonly string[],
+	email: string,
+	subject: string
+): Promise<string> {
+	const { rows } = await client.query<{ epoch: string }>(
+		`SELECT nextval('member_identity_epoch_seq')::text AS epoch`
+	);
+	await client.query(
+		`UPDATE member SET email = $2, ident_subject = $3, identity_epoch = $4
+		  WHERE id = ANY($1::uuid[])`,
+		[memberIds, email, subject, rows[0].epoch]
+	);
+	return rows[0].epoch;
+}
+
+const usernameTaken = (field: string) => new MemberWriteError(409, 'that username is taken', field);
+
+// Set, change or clear a member's username on the caller's transaction. `next`
+// has already passed checkUsername (usernames.ts), or is null to clear. Every
+// write to either table takes the group's member-write lock first, which is what
+// keeps a name from being one member's current and another's retired; the lock
+// is per transaction, so a caller already holding it takes it again for free.
+// An empty value clears it and retires the old name. Returns whether anything
+// changed.
+export async function setUsernameIn(
+	client: Client,
+	u: { group: GroupRef; memberId: string; next: string | null; field: string; actor: Actor }
+): Promise<boolean> {
+	const next = u.next;
+	await client.query(GROUP_LOCK_SQL, [u.group.id]);
+	const { rows } = await client.query<{
+		username: string | null;
+		email: string;
+		subject: string | null;
+	}>(
+		`SELECT username::text AS username, email::text AS email, ident_subject AS subject
+		   FROM member WHERE group_id = $1 AND id = $2 AND status = 'active' FOR UPDATE`,
+		[u.group.id, u.memberId]
+	);
+	const row = rows[0];
+	if (!row) throw new MemberWriteError(404, 'this profile no longer exists');
+	const old = row.username;
+	if (next === old) return false;
+
+	if (next) {
+		const held = await client.query(
+			`SELECT 1 FROM member_username_retired
+			  WHERE group_id = $1 AND username = $2 AND member_id <> $3`,
+			[u.group.id, next, u.memberId]
+		);
+		if (held.rows.length) throw usernameTaken(u.field);
+	}
+	try {
+		await client.query(`UPDATE member SET username = $3 WHERE group_id = $1 AND id = $2`, [
+			u.group.id,
+			u.memberId,
+			next
+		]);
+	} catch (e) {
+		if ((e as { code?: string }).code === '23505') throw usernameTaken(u.field);
+		throw e;
+	}
+	if (next) {
+		await client.query(
+			`DELETE FROM member_username_retired
+			  WHERE group_id = $1 AND username = $2 AND member_id = $3`,
+			[u.group.id, next, u.memberId]
+		);
+	}
+	if (old) {
+		await client.query(
+			`INSERT INTO member_username_retired (group_id, username, member_id)
+			 VALUES ($1, $2, $3)
+			 ON CONFLICT (group_id, username) DO UPDATE SET retired_at = now()
+			  WHERE member_username_retired.member_id = EXCLUDED.member_id`,
+			[u.group.id, old, u.memberId]
+		);
+	}
+	await auditIn(client, {
+		...u.actor,
+		category: 'data',
+		action: 'member.updated',
+		groupId: u.group.id,
+		groupSlug: u.group.slug,
+		targetEmail: row.email,
+		targetSubject: row.subject,
+		targetId: u.memberId,
+		before: { username: old },
+		after: { username: next },
+		meta: {}
 	});
 	return true;
 }

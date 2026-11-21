@@ -1,5 +1,4 @@
-import { error, fail } from '@sveltejs/kit';
-import { getGroupBySlug } from '$lib/server/groups';
+import { fail } from '@sveltejs/kit';
 import { requireGroupAdmin } from '$lib/server/route-guards';
 import { listRequests, approveRequest, denyRequest } from '$lib/server/requests';
 import { deleteUserSessions } from '$lib/server/session-store';
@@ -8,12 +7,13 @@ import { actorOf } from '$lib/server/audit';
 import { log } from '$lib/server/log';
 import type { Actions, PageServerLoad } from './$types';
 
-// The load is admin-gated by the parent admin layout; the actions below are
-// not, because layout loads do not run on a form dispatch, so each re-resolves
-// via requireGroupAdmin.
-export const load: PageServerLoad = async ({ params }) => {
-	const group = await getGroupBySlug(params.slug);
-	if (!group) throw error(404, 'No such community');
+// Every admin load and action checks the grant for itself. The admin layout's
+// gate does not stop a leaf-only `__data.json` request, which runs this load
+// and none of its ancestors, and on a full request SvelteKit still serializes
+// this load's data beside the layout's 403.
+// Actions need it too: layout loads do not run on a form dispatch.
+export const load: PageServerLoad = async ({ params, locals }) => {
+	const group = await requireGroupAdmin(params, locals);
 	try {
 		return { requests: await listRequests(group), loadError: null };
 	} catch (e) {

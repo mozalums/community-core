@@ -267,11 +267,17 @@ test('E43 R7: check-neutral runs in pnpm check beside check-node-pin', () => {
 	assert.match(check, /tsx scripts\/check-node-pin\.ts && tsx scripts\/check-neutral\.ts && /);
 });
 
-test('E43 R7: the check names each file and line, ignores the skin, and honors only its one exception', () => {
+test('E43 R7: the check names each file and line, ignores the skin, and honors only its named exceptions', () => {
 	assert.equal(TERMS.length, 8);
-	assert.equal(EXCEPTIONS.length, 1, 'the exception list grew');
-	assert.equal(EXCEPTIONS[0].path, 'src/lib/server/redact.ts');
-	assert.ok(EXCEPTIONS[0].reason.length > 20, 'the exception carries no reason');
+	assert.deepEqual(
+		EXCEPTIONS.map((e) => [e.path, e.term]),
+		[
+			['src/lib/server/redact.ts', TERMS[7]],
+			['scripts/e53-review-cookies.test.mjs', TERMS[1]]
+		],
+		'the exception list changed'
+	);
+	for (const e of EXCEPTIONS) assert.ok(e.reason.length > 20, `${e.path} carries no reason`);
 
 	const credential = TERMS[7];
 	const hits = findHits([

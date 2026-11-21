@@ -55,7 +55,6 @@ mock.module('$lib/server/members', {
 	}
 });
 mock.module('$lib/server/avatars', { namedExports: { avatarIdFor: async () => null } });
-mock.module('$lib/server/gravatar', { namedExports: { gravatarHash: () => null } });
 // The Mailgun API boundary, recording what would leave over HTTP.
 const mailgunSent: Record<string, unknown>[] = [];
 mock.module('mailgun.js', {
@@ -130,7 +129,7 @@ test('E41 R1: the document title and every sign-in surface name the site from th
 
 test('E41 R2: both messages take their From name from the skin, and the sign-in message every string', () => {
 	const email = read('src/lib/server/email.ts');
-	assert.equal((email.match(/fromName: mail\.from_name,/g) ?? []).length, 2);
+	assert.equal((email.match(/fromName: mail\.from_name,/g) ?? []).length, 4);
 	assert.match(
 		email,
 		/subject: mail\.sign_in_subject,\s*siteName: site\.name,\s*signature: mail\.signature,\s*credit: mail\.credit/
@@ -289,7 +288,7 @@ test('E41 R4: a skin without a document gets a 404 for its route and no link to 
 	const data = await layout(
 		event('/members', { email: 'a@example.org', subject: 'email:a@example.org' })
 	);
-	assert.deepEqual(data.documents, { manifesto: false, codeOfConduct: false });
+	assert.deepEqual(data.documents, { manifesto: false, codeOfConduct: false, privacy: false });
 
 	for (const f of ['src/lib/components/Landing.svelte', 'src/lib/components/Sidebar.svelte']) {
 		const src = read(f);

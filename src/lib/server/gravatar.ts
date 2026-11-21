@@ -15,9 +15,14 @@
 // TTL_MS and the conditional request below are those conditions in code.
 
 import { createHash } from 'node:crypto';
-import type { GravatarHash } from '$lib/gravatar';
 import { getAvatarByEmail, recordGravatar, type AvatarRow } from '$lib/server/avatars';
 import { log } from '$lib/server/log';
+
+declare const gravatarHashBrand: unique symbol;
+
+// sha256(trimmed, lowercased address), the key Gravatar addresses images by.
+// Branded so fetchGravatar cannot be handed an address by mistake.
+export type GravatarHash = string & { readonly [gravatarHashBrand]: true };
 
 // sha256, not md5. Gravatar's own spec says "Don't use MD5!", and the weaker
 // digest is also the one that makes a membership oracle cheap: confirming a

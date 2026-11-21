@@ -1,0 +1,84 @@
+{
+	"rpID": "f08.localhost",
+	"origin": "http://www.f08.localhost:5899",
+	"memberId": "6f0f8a7e-3c1d-4b2a-9e5f-0a1b2c3d4e5f",
+	"email": "passkey-e2e@example.org",
+	"registrationOptions": {
+		"challenge": "T-YtQV7plCJxy3D1V9VjYlJelHzly3RBH5q7UMPi3Es",
+		"rp": {
+			"name": "Example Community",
+			"id": "f08.localhost"
+		},
+		"user": {
+			"id": "bw-KfjwdSyqeXwobLD1OXw",
+			"name": "passkey-e2e@example.org",
+			"displayName": "Pat Key"
+		},
+		"pubKeyCredParams": [
+			{
+				"alg": -8,
+				"type": "public-key"
+			},
+			{
+				"alg": -7,
+				"type": "public-key"
+			},
+			{
+				"alg": -257,
+				"type": "public-key"
+			}
+		],
+		"timeout": 60000,
+		"attestation": "none",
+		"excludeCredentials": [],
+		"authenticatorSelection": {
+			"residentKey": "required",
+			"userVerification": "preferred",
+			"requireResidentKey": true
+		},
+		"extensions": {
+			"credProps": true
+		},
+		"hints": []
+	},
+	"registrationResponse": {
+		"id": "uSDNmdn5XRDqJLzSZT4vzj8iT2Y-HOmCZbbK2Ah-Nks",
+		"rawId": "uSDNmdn5XRDqJLzSZT4vzj8iT2Y-HOmCZbbK2Ah-Nks",
+		"response": {
+			"attestationObject": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YViBf4k6Q4C-lVQxBbRfuaLOH94WQtPcwtQjIjXA--Eql6ZFAAAAAQECAwQFBgcIAQIDBAUGBwgAILkgzZnZ-V0Q6iS80mU-L84_Ik9mPhzpgmW2ytgIfjZLpAEBAycgBiFYIJCPe954ey0SO5-fRX6N3J29i1gH-91Nh_cAz_ptbJGe",
+			"clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVC1ZdFFWN3BsQ0p4eTNEMVY5VmpZbEplbEh6bHkzUkJINXE3VU1QaTNFcyIsIm9yaWdpbiI6Imh0dHA6Ly93d3cuZjA4LmxvY2FsaG9zdDo1ODk5IiwiY3Jvc3NPcmlnaW4iOmZhbHNlfQ",
+			"transports": [
+				"internal"
+			],
+			"publicKeyAlgorithm": -8,
+			"publicKey": "MCowBQYDK2VwAyEAkI973nh7LRI7n59Ffo3cnb2LWAf73U2H9wDP-m1skZ4",
+			"authenticatorData": "f4k6Q4C-lVQxBbRfuaLOH94WQtPcwtQjIjXA--Eql6ZFAAAAAQECAwQFBgcIAQIDBAUGBwgAILkgzZnZ-V0Q6iS80mU-L84_Ik9mPhzpgmW2ytgIfjZLpAEBAycgBiFYIJCPe954ey0SO5-fRX6N3J29i1gH-91Nh_cAz_ptbJGe"
+		},
+		"type": "public-key",
+		"clientExtensionResults": {
+			"credProps": {
+				"rk": true
+			}
+		},
+		"authenticatorAttachment": "platform"
+	},
+	"authenticationOptions": {
+		"rpId": "f08.localhost",
+		"challenge": "5SGX7KKzJPYK5EIvcjTRHlmWkU0WJutXJUJdcXxPnGU",
+		"timeout": 60000,
+		"userVerification": "preferred"
+	},
+	"authenticationResponse": {
+		"id": "uSDNmdn5XRDqJLzSZT4vzj8iT2Y-HOmCZbbK2Ah-Nks",
+		"rawId": "uSDNmdn5XRDqJLzSZT4vzj8iT2Y-HOmCZbbK2Ah-Nks",
+		"response": {
+			"authenticatorData": "f4k6Q4C-lVQxBbRfuaLOH94WQtPcwtQjIjXA--Eql6YFAAAAAg",
+			"clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiNVNHWDdLS3pKUFlLNUVJdmNqVFJIbG1Xa1UwV0p1dFhKVUpkY1h4UG5HVSIsIm9yaWdpbiI6Imh0dHA6Ly93d3cuZjA4LmxvY2FsaG9zdDo1ODk5IiwiY3Jvc3NPcmlnaW4iOmZhbHNlfQ",
+			"signature": "zjP6BCirDf2LPZP55XVPwLI9Y9_OZk7HZJ0fPX6RZIYax2YyJ01aGPUBg1RUMsYJjxs62UzrpilzfaXt9hw3Bg",
+			"userHandle": "bw-KfjwdSyqeXwobLD1OXw"
+		},
+		"type": "public-key",
+		"clientExtensionResults": {},
+		"authenticatorAttachment": "platform"
+	}
+}

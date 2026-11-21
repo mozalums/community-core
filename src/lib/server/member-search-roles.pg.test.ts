@@ -55,6 +55,7 @@ async function directory(q: string): Promise<string[]> {
 	const out = (await load({
 		params: { slug: SLUG },
 		url: new URL(`https://example.org/group/${SLUG}/members?q=${encodeURIComponent(q)}`),
+		parent: async () => ({}),
 		locals: { user: { id: 'u1', email: 'r@example.org', subject: 'email:r@example.org' } }
 	} as unknown as Parameters<typeof load>[0])) as { members: { name: string | null }[] };
 	return out.members.map((m) => m.name ?? '').sort();

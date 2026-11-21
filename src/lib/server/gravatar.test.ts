@@ -22,7 +22,7 @@ mock.module('$lib/server/avatars', {
 	}
 });
 
-const { gravatarHash, fetchGravatar, isStale, refreshOnSignIn, TTL_MS } =
+const { gravatarHash, fetchGravatar, isStale, refreshOnSignIn, scheduleRefresh, TTL_MS } =
 	await import('./gravatar');
 
 /** Let the detached refresh promise chain settle. */
@@ -238,4 +238,25 @@ test('a missing address is a no-op rather than a hash of the empty string', asyn
 	refreshOnSignIn('   ');
 	await settle();
 	assert.equal(calls.length, 0);
+});
+
+// The privacy notice says a failed lookup keeps nothing and the next display
+// asks again, so a weekly ceiling is not a claim it can make; the notice's
+// wording is held to this behavior in src/lib/skin/skin.test.ts (E32 R4).
+test('E32 R4: a failed lookup records nothing, so the next display asks Gravatar again', async () => {
+	const realFetch = globalThis.fetch;
+	try {
+		recorded.length = 0;
+		calls.length = 0;
+		stubFetch({ status: 503 });
+		const row = { email: 'retry@example.org', source: 'none' as const, fetchedAt: null, lastModified: null };
+		scheduleRefresh(row);
+		await settle();
+		scheduleRefresh(row);
+		await settle();
+		assert.equal(calls.length, 2);
+		assert.equal(recorded.length, 0);
+	} finally {
+		globalThis.fetch = realFetch;
+	}
 });

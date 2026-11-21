@@ -71,7 +71,7 @@ function get(id: string, opts: { ip?: string; ifNoneMatch?: string } = {}) {
 	return {
 		url,
 		params: { id },
-		locals: { sessionId: null, session: null, user: null, marketing: { cohort: '', utm: {} } },
+		locals: { sessionId: null, session: null, user: null },
 		getClientAddress: () => opts.ip ?? '203.0.113.7',
 		request: new Request(url, {
 			headers: opts.ifNoneMatch ? { 'if-none-match': opts.ifNoneMatch } : {}

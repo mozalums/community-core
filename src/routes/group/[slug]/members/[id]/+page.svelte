@@ -2,6 +2,8 @@
 	import { page } from '$app/stores';
 	import Breadcrumbs from '$lib/components/Breadcrumbs.svelte';
 	import Gravatar from '$lib/components/Gravatar.svelte';
+	import { splitBioLinks } from '$lib/bio-links';
+	import StarButton from '$lib/components/StarButton.svelte';
 	import { groupBase } from '$lib/group-nav';
 	import type { PageData } from './$types';
 
@@ -9,6 +11,7 @@
 	const base = $derived(groupBase($page.url.pathname, data.group.slug));
 
 	const p = $derived(data.profile);
+	const bioSegments = $derived(p.bio ? splitBioLinks(p.bio) : []);
 
 	// A URL shown as its bare address (no protocol/www), linking to itself.
 	const urlDisplay = (u: string) =>
@@ -19,6 +22,8 @@
 
 	// Link to the directory searching for `term`.
 	const searchHref = (term: string) => `${base}/members?q=${encodeURIComponent(term)}`;
+	// Link to the directory filtered on a field, from the query the server built.
+	const filterHref = (query: string) => `${base}/members?${query}`;
 
 	type Entry = { main: string; pills: string[] };
 
@@ -65,13 +70,17 @@
 		tokens?: string[];
 		entries?: Entry[];
 		href?: string;
+		text?: string;
+		filter?: string;
 		sep: string;
 	};
 
 	// Labeled rows in the order the server sent them, which is the field schema's.
 	// A list field parses into entries whose parenthetical qualifiers render as
-	// clickable pills; a URL renders as a link; anything else is one clickable
-	// search token.
+	// clickable pills; a URL renders as a link where the server vouched for it
+	// and as plain text where it did not; anything else is one clickable token,
+	// linking to the field's filter where the server sent one and to a search
+	// otherwise.
 	const details = $derived(
 		p.details.map((d): Detail => {
 			if (d.type === 'tags') {
@@ -85,8 +94,12 @@
 			if (d.type === 'list') {
 				return { key: d.key, label: d.label, entries: parseEntries(d.value), sep: ', ' };
 			}
-			if (d.type === 'url') return { key: d.key, label: d.label, href: d.value, sep: '' };
-			return { key: d.key, label: d.label, tokens: [d.value], sep: ', ' };
+			if (d.type === 'url') {
+				return d.href
+					? { key: d.key, label: d.label, href: d.href, sep: '' }
+					: { key: d.key, label: d.label, text: d.value, sep: '' };
+			}
+			return { key: d.key, label: d.label, tokens: [d.value], filter: d.filter, sep: ', ' };
 		})
 	);
 </script>
@@ -109,10 +122,10 @@
 			<div class="flex min-w-0 items-center gap-4">
 				<!-- Slightly smaller avatar on mobile to free up header width. -->
 				<span class="sm:hidden">
-					<Gravatar hash={p.gravatarHash} name={p.name} size={52} avatarId={p.avatarId} />
+					<Gravatar name={p.name} size={52} avatarId={p.avatarId} />
 				</span>
 				<span class="hidden sm:block">
-					<Gravatar hash={p.gravatarHash} name={p.name} size={64} avatarId={p.avatarId} />
+					<Gravatar name={p.name} size={64} avatarId={p.avatarId} />
 				</span>
 				<div class="min-w-0">
 					<h1 class="text-2xl font-bold">{p.name ?? 'Unnamed member'}</h1>
@@ -144,19 +157,33 @@
 					{/if}
 				</div>
 			</div>
-			{#if data.canEdit}
-				<a
-					href={`${base}/members/${p.id}/edit`}
-					class="shrink-0 self-start rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-white/5 sm:self-auto"
-				>
-					Edit
-				</a>
+			{#if data.starred !== undefined || data.canEdit}
+				<div class="flex shrink-0 items-center gap-2 self-start sm:self-auto">
+					{#if data.starred !== undefined}
+						<StarButton {base} memberId={p.ref} starred={data.starred} />
+					{/if}
+					{#if data.canEdit}
+						<a
+							href={`${base}/members/${p.ref}/edit`}
+							class="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-white/5"
+						>
+							Edit
+						</a>
+					{/if}
+				</div>
 			{/if}
 		</div>
 
 		{#if p.bio}
 			<div class="border-t border-gray-100 px-6 py-5 dark:border-white/10">
-				<p class="whitespace-pre-line text-gray-700 dark:text-neutral-300">{p.bio}</p>
+				<p class="whitespace-pre-line text-gray-700 dark:text-neutral-300">
+					{#each bioSegments as s, i (i)}{#if s.kind === 'link'}<a
+								href={s.href}
+								target="_blank"
+								rel="nofollow noopener noreferrer ugc"
+								class="break-all text-link hover:underline">{s.text}</a
+							>{:else}{s.text}{/if}{/each}
+				</p>
 			</div>
 		{/if}
 
@@ -177,6 +204,8 @@
 								>
 									{urlDisplay(d.href)}
 								</a>
+							{:else if d.text !== undefined}
+								<span class="break-all">{d.text}</span>
 							{:else if d.entries}
 								<div class="space-y-1">
 									{#each d.entries as e, i (e.main + i)}
@@ -195,7 +224,7 @@
 								</div>
 							{:else}
 								{#each d.tokens ?? [] as t, i (t + i)}{#if i > 0}{d.sep}{/if}<a
-										href={searchHref(t)}
+										href={d.filter ? filterHref(d.filter) : searchHref(t)}
 										class="hover:underline">{t}</a
 									>{/each}
 							{/if}

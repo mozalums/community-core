@@ -165,6 +165,14 @@ export function membersVisibleKeys(schema: readonly FieldDef[] = DEFAULT_FIELD_S
 	return schema.filter((f) => isMembersVisibleKey(f.key, schema)).map((f) => f.key);
 }
 
+// The fields the directory filters on by whole value: those the skin marks
+// `filter: exact`, narrowed to membersVisibleKeys so a filter never reads a
+// value the profile hides, whatever the skin says.
+export function filterFields(schema: readonly FieldDef[] = DEFAULT_FIELD_SCHEMA): FieldDef[] {
+	const visible = new Set(membersVisibleKeys(schema));
+	return schema.filter((f) => f.filter === 'exact' && visible.has(f.key));
+}
+
 const text = (v: unknown) => (v == null ? '' : String(v).trim());
 
 // The member row's typed columns, each the non-empty values of the fields
@@ -185,6 +193,20 @@ export function promotedColumns(
 		city: join('city'),
 		linkedin: join('linkedin')
 	};
+}
+
+// Where an exact filter reads a field's value: the promoted city column for the
+// field that alone feeds it, and `data` at the field's own key for every other
+// field. City is the one exception because the directory has always matched
+// places on that column; a field feeding name, email or linkedin is still
+// compared on its stored value, so a promoted column never answers for a key.
+export function filterColumn(
+	f: FieldDef,
+	schema: readonly FieldDef[] = DEFAULT_FIELD_SCHEMA
+): 'city' | undefined {
+	if (f.column !== 'city') return undefined;
+	const keys = promotedKeys('city', schema);
+	return keys.length === 1 && keys[0] === f.key ? 'city' : undefined;
 }
 
 export function promotedKeys(

@@ -10,10 +10,23 @@ Running a deployed site: scripts on the host, backups and restore, how the conta
 deploy/run.sh export-members example > roster.csv
 deploy/run.sh import-members example - < roster.csv
 deploy/run.sh prune-audit
+deploy/run.sh change-member-email old@example.org new@example.org
 deploy/run.sh --help          # the list, read off scripts/
 ```
 
 It reads `deploy/deploy.env` and hands it to compose after the secrets file, the way `deploy/deploy.sh` does, so a host with its own project name, port or secrets directory runs the script against its own stack even though the compose call goes through sudo. It rebuilds the image first, for the reason the migrate step does: `compose run` reuses whatever image exists, so without that a script silently runs against whatever commit the image was last built from. A configuration change applied by stale code is worse than one that fails.
+
+## Member lost both sign-in addresses
+
+A member who changed their sign-in email can undo it from the old address for 7 days, and can always sign in by magic link at the current one. One who has lost access to both (an old employer's mailbox, say, and a new address someone else controls) has no link that reaches them. Confirm who they are by whatever means your community trusts, out of band, then move their account to an address they hold now:
+
+```bash
+deploy/run.sh change-member-email old@example.org new@example.org
+```
+
+`old@example.org` is the address the account signs in as today. The script moves every group's member row, admin grant and star from it to the new address in one transaction, the same rewrite a member's own change runs, deletes the account's passkeys (whoever holds the lost address may have enrolled one), voids every undo link the account's notices carried and every change link still pending, and records `member.email-changed` audit rows with `operator:change-member-email` as the actor. It refuses, changing nothing, when no member has the old address or when the new one already belongs to a member or an admin. If the account joins a group while the script runs, it stops and says to retry; run it again. No mail is sent: tell the member to sign in by magic link at the new address, and to add a passkey again if they used one.
+
+Sessions under the old address are not deleted, since the script reaches only Postgres. They stop matching any member row or admin grant the moment it commits, so they can see nothing a guest cannot, and they end at their 24-hour lifetime.
 
 ## Backups
 
@@ -257,7 +270,9 @@ SELECT (SELECT count(*) FROM "group")        AS groups,
        (SELECT count(*) FROM group_admin)    AS admins,
        (SELECT count(*) FROM access_request) AS requests,
        (SELECT count(*) FROM member_avatar)  AS avatars,
-       (SELECT count(*) FROM member_star)    AS stars;
+       (SELECT count(*) FROM member_star)    AS stars,
+       (SELECT count(*) FROM audit_event)    AS audit_events,
+       (SELECT count(*) FROM member_import_plan) AS import_plans;
 SELECT encode(sha256(bytes), $$hex$$) || $$ $$ || octet_length(bytes)
   FROM member_avatar WHERE bytes IS NOT NULL ORDER BY email_md5 LIMIT 1;
 SELECT string_agg(version || $$:$$ || name, $$, $$ ORDER BY version)
@@ -361,6 +376,54 @@ Rate limiting and abuse logging key on the client address, and `adapter-node` re
 Both live in `docker-compose.yml`, and both are pointless without the `proxy_set_header X-Forwarded-For` line in the server block: nginx passes a client-supplied header through untouched, so setting `ADDRESS_HEADER` alone lets the caller choose their own rate-limit key. `XFF_DEPTH` counts proxies from the app backwards; a value above the real hop count reads an entry the client wrote. Add a CDN or load balancer in front of nginx and the count goes up in the same change.
 
 The app is deliberately unimpressed by disagreement between the two: a request missing the header logs `proxy.address-header-missing` at warn and keys on the peer address instead (`src/lib/server/client-address.ts`). Local `pnpm dev` sets neither variable and needs no proxy — the peer is already the client there.
+
+## Logs
+
+Every log this deployment writes is kept at most 30 days, because the community's privacy notice says so and a stated retention nothing enforces is worse than none. Three streams carry visitor or member data, and each needs its own limit, because none of the host's defaults is 30 days.
+
+| Stream                                  | Where it lands                         | What bounds it                                              |
+| --------------------------------------- | -------------------------------------- | ----------------------------------------------------------- |
+| Container output (app, Postgres, Redis) | journald, tagged `community-{{.Name}}` | `MaxRetentionSec=30day` in a journald drop-in               |
+| nginx access and error logs             | `/var/log/nginx/community/`            | its own logrotate rule: daily, `rotate 30`, `maxage 30`     |
+| Any shipped copy (Loki, etc.)           | wherever the host's agent sends it     | that store's own retention, which has to be 30 days or less |
+
+The containers log to journald rather than Docker's `json-file`, which rotates by size: a quiet month keeps lines longer than 30 days. `docker compose logs` reads the journal the same way, so nothing changes for whoever is debugging. The driver alone enforces nothing, though. The host supplies the limit:
+
+```sh
+sudo install -d /etc/systemd/journald.conf.d
+printf '[Journal]\nMaxRetentionSec=30day\nSystemMaxUse=1G\n' | sudo tee /etc/systemd/journald.conf.d/30-day-retention.conf
+echo ':programname, startswith, "community-" stop' | sudo tee /etc/rsyslog.d/10-community-containers.conf
+sudo rsyslogd -N1 && sudo systemctl restart systemd-journald rsyslog
+```
+
+The journald limit covers the whole host's journal, not only these containers; journald has no per-unit retention. The rsyslog rule exists because Debian and Ubuntu forward the journal to `/var/log/syslog`, which rotates weekly with four copies and so keeps about 35 days. Matching the `community-` tag keeps these containers' lines out of it while every other service's still reach it.
+
+nginx logs move out of `/var/log/nginx/*.log` for the same reason: the distribution's rule there keeps 52 days and covers every site on the box. `deploy/nginx/example.conf` sets `access_log` and `error_log` in each server block, which also stops the http-level defaults from copying these requests into the shared files. Create the directory and the rule once:
+
+```sh
+sudo install -d -o root -g adm -m 755 /var/log/nginx/community
+sudo tee /etc/logrotate.d/nginx-community >/dev/null <<'ROT'
+/var/log/nginx/community/*.log {
+        daily
+        missingok
+        rotate 30
+        maxage 30
+        compress
+        delaycompress
+        notifempty
+        create 640 www-data adm
+        sharedscripts
+        postrotate
+                [ -f /run/nginx.pid ] && kill -USR1 `cat /run/nginx.pid`
+        endscript
+}
+ROT
+sudo logrotate -d /etc/logrotate.d/nginx-community
+```
+
+A log agent that ships these files elsewhere needs the new path added, and the destination's retention checked: a 30-day file feeding a 90-day store keeps 90.
+
+Lines written before a host adopted this layout stay in the shared files until the old rule ages them out, 52 days on a stock Ubuntu nginx. They are interleaved with other sites' lines, so they are left alone rather than filtered in place.
 
 ## Security headers
 

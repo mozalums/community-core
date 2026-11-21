@@ -20,6 +20,7 @@ import {
 	ownValue
 } from '$lib/server/field-schema';
 import { createMemberIn, type Patch } from '$lib/server/member-write';
+import { profileHref } from '$lib/server/profile-url';
 import type { Group } from '$lib/server/groups';
 
 export { AFFILIATIONS, OTHER_AFFILIATION_KEY };
@@ -30,7 +31,8 @@ export type MembershipRequest = {
 	id: string;
 	email: string;
 	name: string;
-	details: { label: string; value: string }[];
+	// `href` only on a url field whose value passes the profile save check.
+	details: { label: string; value: string; href?: string }[];
 	/** Earlier denials of this address in this group, newest first. */
 	priorDenials: { at: string; reason: string | null }[];
 };
@@ -136,7 +138,13 @@ export async function listRequests(group: Group): Promise<MembershipRequest[]> {
 		const affiliations = AFFILIATIONS.filter((a) => isChecked(get(a.key))).map((a) => a.label);
 		const other = OTHER_AFFILIATION_KEY ? get(OTHER_AFFILIATION_KEY) : '';
 		const assoc = [...affiliations, ...(other ? [other] : [])].join(', ');
-		const rest = specs.map((s) => ({ label: s.label, value: get(s.name) })).filter((d) => d.value);
+		const rest = specs
+			.map((s) => {
+				const value = get(s.name);
+				const href = s.url ? profileHref(value) : null;
+				return { label: s.label, value, ...(href ? { href } : {}) };
+			})
+			.filter((d) => d.value);
 
 		return {
 			id: r.id,

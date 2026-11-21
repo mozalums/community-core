@@ -5,19 +5,18 @@ import { redirect } from '@sveltejs/kit';
 import type { Handle } from '@sveltejs/kit';
 import { APP_APEX_DOMAIN } from '$lib/site';
 import { GROUP_GATED_ROUTE } from '$lib/group-nav';
-import { isoWeekCohort } from '$lib/server/iso-week';
 import { log } from '$lib/server/log';
 import { assertSkinAtBoot } from '$lib/skin/load';
 import builtSkin from '$skin/skin.yaml?raw';
 import { assertMailConfig } from '$lib/server/mail';
+import { PASSKEYS_ENABLED } from '$lib/server/passkeys';
 import { ensureSchema } from '$lib/server/schema';
 import { startAuditPruner } from '$lib/server/audit';
 import { securityHeaders } from '$lib/server/security-headers';
 import {
-	COHORT_COOKIE_NAME,
+	RETIRED_COOKIE_NAMES,
 	SESSION_COOKIE_NAME,
 	SESSION_COOKIE_OPTIONS,
-	UTM_COOKIE_NAME,
 	getSession,
 	type SessionData
 } from '$lib/server/session-store';
@@ -33,42 +32,37 @@ function setLocalsSession(event: Parameters<Handle>[0]['event'], session: Sessio
 	event.locals.user = session.user;
 }
 
-const MARKETING_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
+// Earlier builds set these two on every visitor for a year. Nothing reads them,
+// so a browser still holding one gets it expired, with the Path, SameSite and
+// Secure it was set with: a deletion that differs in any of them names a
+// different cookie and the old one stays.
+//
+// Two registrations, because neither reaches every response on its own.
+// SvelteKit copies `event.cookies` onto resolved responses and onto redirects
+// thrown out of `handle` (authorization's 303 to /login), but not onto a
+// Response an inner hook returns without resolving, which is how siteGate
+// answers. Whatever the returned response still lacks is appended by hand.
+const RETIRED_COOKIE_OPTIONS = {
+	path: '/',
+	httpOnly: true,
+	sameSite: 'strict',
+	secure: !dev
+} as const;
 
-// Capture first-touch UTM params and stamp each visitor with an ISO-week
-// cohort, both on year-long cookies. Exposes `event.locals.marketing` for
-// downstream code (signup, analytics, server-side logging).
-const marketing: Handle = async ({ event, resolve }) => {
-	const setCookies: string[] = [];
-	const cookieFlags = `Path=/; Max-Age=${MARKETING_COOKIE_MAX_AGE}; HttpOnly; SameSite=Strict${dev ? '' : '; Secure'}`;
-
-	const utm: Record<string, string> = {};
-	for (const [key, value] of event.url.searchParams.entries()) {
-		if (key.startsWith('utm_')) utm[key] = value;
-	}
-	if (Object.keys(utm).length > 0) {
-		setCookies.push(`${UTM_COOKIE_NAME}=${encodeURIComponent(JSON.stringify(utm))}; ${cookieFlags}`);
-	} else {
-		const existing = event.cookies.get(UTM_COOKIE_NAME);
-		if (existing) {
-			try {
-				Object.assign(utm, JSON.parse(decodeURIComponent(existing)));
-			} catch {
-				// malformed cookie — ignore; locals.marketing.utm stays empty
-			}
-		}
-	}
-
-	let cohort = event.cookies.get(COHORT_COOKIE_NAME);
-	if (!cohort) {
-		cohort = isoWeekCohort();
-		setCookies.push(`${COHORT_COOKIE_NAME}=${cohort}; ${cookieFlags}`);
-	}
-
-	event.locals.marketing = { cohort, utm };
-
+const expireRetiredCookies: Handle = async ({ event, resolve }) => {
+	const held = RETIRED_COOKIE_NAMES.filter((name) => event.cookies.get(name) !== undefined);
+	for (const name of held) event.cookies.delete(name, RETIRED_COOKIE_OPTIONS);
 	const response = await resolve(event);
-	for (const c of setCookies) response.headers.append('set-cookie', c);
+	const sent = new Set(
+		response.headers.getSetCookie().map((line) => line.slice(0, line.indexOf('=')))
+	);
+	for (const name of held) {
+		if (sent.has(name)) continue;
+		response.headers.append(
+			'set-cookie',
+			`${name}=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=Strict${dev ? '' : '; Secure'}`
+		);
+	}
 	return response;
 };
 
@@ -145,15 +139,31 @@ function denyResponse(path: string, status: 401 | 403): Response {
 	return new Response('forbidden', { status: 403, headers: { 'content-type': 'text/plain' } });
 }
 
+// With passkeys switched off these endpoints do not exist, for every caller and
+// every method. The 404 is answered here rather than by the handlers' own
+// guards because `resolve` dispatches on method first: a method the route does
+// not export gets a 405 and an `Allow` header naming the ones it does, before
+// any handler runs. Returned rather than thrown, so the response still passes
+// back through noStoreGated and securityHeaders.
+const PASSKEY_ROUTES = new Set(['/(auth)/auth/passkey', '/group/[slug]/members/[id]/passkeys']);
+
+function passkeysOff(method: string): Response {
+	return new Response(method === 'HEAD' ? null : 'Not found', {
+		status: 404,
+		headers: { 'content-type': 'text/plain; charset=utf-8' }
+	});
+}
+
 const authorization: Handle = async ({ event, resolve }) => {
 	const routeId = event.route.id ?? '';
+	if (!PASSKEYS_ENABLED && PASSKEY_ROUTES.has(routeId)) return passkeysOff(event.request.method);
 	const rule = AUTH_RULES.find((r) => r.match(routeId));
 	if (rule && !event.locals.user) {
 		// The clean URL the visitor actually sees, not the route id.
 		const path = event.url.pathname;
-		// Admin surfaces: bounce guests to the homepage login modal (destination
-		// preserved via ?next=) so they sign in as an admin — matching the
-		// not-an-admin bounce in group/[slug]/admin/+layout.server.ts. Members and
+		// Admin surfaces: bounce guests to the homepage login modal with the
+		// destination in ?next=, so an admin's pasted link lands after sign-in. A
+		// signed-in non-admin gets a 403 from the admin pages instead. Members and
 		// API keep the plain /login (or JSON) response.
 		if (!path.startsWith('/api/') && ADMIN_GATED.test(routeId)) {
 			throw redirect(303, `/?login=1&next=${encodeURIComponent(path)}`);
@@ -254,16 +264,18 @@ const siteGate = createSiteGate(parseGateConfig(env), {
 // redirect *thrown* by `authorization` below unwinds past it and reaches the
 // client bare, which is why the headers are proven on responses rather than
 // assumed (src/lib/server/security-headers.test.ts).
-// siteGate sits directly inside securityHeaders and before everything else: it
+// expireRetiredCookies sits ahead of siteGate so a gated visitor still loses the
+// retired cookies; it reads only the request's own cookie header.
+// siteGate sits before everything else that remains: it
 // returns its responses rather than throwing, so they still collect the header
 // baseline on the way out, and short-circuiting above sessionLoader means a
 // gated request costs no Redis or Postgres round-trip.
 export const handle: Handle = sequence(
 	securityHeaders,
+	expireRetiredCookies,
 	siteGate,
 	staticCache,
 	noStoreGated,
-	marketing,
 	sessionLoader,
 	authorization
 );

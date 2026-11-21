@@ -1,4 +1,4 @@
-// Authorization for anything that is not a page `load`.
+// Authorization for actions, endpoints, and the page loads under a gated subtree.
 //
 // SvelteKit runs a route's ancestor layout `load` functions only when it renders
 // a page. Dispatching a form action or a `+server.ts` handler jumps straight to
@@ -11,19 +11,27 @@
 
 import { error } from '@sveltejs/kit';
 import { getGroupBySlug, resolveGroupAdmin, type Group } from '$lib/server/groups';
-import { resolveMember } from '$lib/server/members';
+import { resolveMember, type Member } from '$lib/server/members';
 import type { SessionUser } from '$lib/server/session-store';
 
-// The gate in group/[slug]/admin/+layout.server.ts, in a form actions can use.
+// The gate in group/[slug]/admin/+layout.server.ts, in a form actions and page
+// loads can use. A page load needs it as much as an action: a leaf-only
+// `__data.json` request runs the page load without its ancestor layouts.
+//
+// The grant check runs against the group's identity alone. Unpublished landing
+// text is admin data too, so the full row is read only once the caller holds
+// the grant, and only if the slug still names the group that was checked.
 export async function requireGroupAdmin(
 	params: { slug: string },
 	locals: App.Locals
 ): Promise<Group> {
-	const group = await getGroupBySlug(params.slug);
-	if (!group) throw error(404, 'No such community');
-	if (!(await resolveGroupAdmin(group, locals.user))) {
+	const identity = await getGroupBySlug(params.slug, { landing: false });
+	if (!identity) throw error(404, 'No such community');
+	if (!(await resolveGroupAdmin(identity, locals.user))) {
 		throw error(403, 'Group admins only');
 	}
+	const group = await getGroupBySlug(params.slug);
+	if (!group || group.id !== identity.id) throw error(404, 'No such community');
 	return group;
 }
 
@@ -32,15 +40,16 @@ export async function requireGroupAdmin(
 export async function requireDirectoryAccess(
 	params: { slug: string },
 	locals: App.Locals
-): Promise<{ group: Group; user: SessionUser }> {
+): Promise<{ group: Group; user: SessionUser; member: Member | null }> {
 	const group = await getGroupBySlug(params.slug);
 	if (!group) throw error(404, 'No such community');
 	const user = locals.user;
 	if (!user) throw error(401, 'Sign in required');
 
 	const { member } = await resolveMember(group.id, user.email, user.subject);
-	if (member) return { group, user };
-	if (await resolveGroupAdmin(group, user)) return { group, user };
+	if (member) return { group, user, member };
+	if (await resolveGroupAdmin(group, user)) return { group, user, member: null };
 
 	throw error(403, 'Directory members only');
 }
+

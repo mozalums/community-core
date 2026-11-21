@@ -24,7 +24,12 @@ import {
 	type Patch
 } from '$lib/server/member-write-core';
 
-export { MemberWriteError, type Authority, type Patch } from '$lib/server/member-write-core';
+export {
+	MemberWriteError,
+	setUsernameIn,
+	type Authority,
+	type Patch
+} from '$lib/server/member-write-core';
 
 const privateValues = () => recordPrivateValuesFrom(process.env);
 
@@ -34,10 +39,15 @@ export function updateMember(
 	patch: Patch,
 	actor: Actor,
 	authority: Authority,
-	opts: { writer?: 'form' | 'system'; allow?: readonly string[] } = {}
+	opts: {
+		writer?: 'form' | 'system';
+		allow?: readonly string[];
+		// More writes to commit or roll back with this one, run after it.
+		also?: (client: Client) => Promise<unknown>;
+	} = {}
 ): Promise<number> {
-	return withTransaction((client) =>
-		updateMemberIn(client, {
+	return withTransaction(async (client) => {
+		const changed = await updateMemberIn(client, {
 			group,
 			memberId,
 			patch,
@@ -46,8 +56,10 @@ export function updateMember(
 			writer: opts.writer ?? 'form',
 			allow: opts.allow,
 			recordPrivateValues: privateValues()
-		})
-	);
+		});
+		await opts.also?.(client);
+		return changed;
+	});
 }
 
 export function createMemberIn(

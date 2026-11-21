@@ -68,7 +68,7 @@ function event(pathname: string, routeId: string, init: RequestInit = {}) {
 		url,
 		route: { id: routeId },
 		params: { id: AVATAR_ID },
-		locals: { sessionId: null, session: null, user: null, marketing: { cohort: '', utm: {} } },
+		locals: { sessionId: null, session: null, user: null },
 		getClientAddress: () => '203.0.113.7',
 		cookies: { get: () => undefined },
 		request: new Request(url, init)
@@ -222,9 +222,9 @@ test('the page CSP names what the app actually loads', async () => {
 	assert.ok(!directives['script-src']?.includes('unsafe-inline'));
 
 	assert.deepEqual(directives['frame-ancestors'], ['none']);
-	// Gravatar.svelte falls back to gravatar.com directly when a member has no
-	// uploaded photo, so the policy has to name it.
-	assert.ok(directives['img-src']?.includes('https://www.gravatar.com'));
+	// Gravatar is fetched server-side and re-served from our origin, so no
+	// browser should load from it; the policy refuses it if a page tries.
+	assert.ok(!directives['img-src']?.some((s: string) => s.includes('gravatar')));
 	// The faces are self-hosted; a font CDN in here would mean they stopped being.
 	assert.deepEqual(directives['font-src'], ['self']);
 	// The suite runs on the default skin, which sets no `analytics` block, so
@@ -274,7 +274,13 @@ test('every nginx server block turns server_tokens off', async () => {
 	const skins = new URL('skin', root);
 	for (const name of await readdir(skins)) {
 		const own = new URL(`${skins.href}/${name}/deploy/nginx/`);
-		if (await readdir(own).then(() => true, () => false)) dirs.push(own);
+		if (
+			await readdir(own).then(
+				() => true,
+				() => false
+			)
+		)
+			dirs.push(own);
 	}
 	const missing: string[] = [];
 	let blocks = 0;

@@ -18,7 +18,7 @@
 
 	// The signed-in member's own profile link (only synced members have a page;
 	// dash-access non-members don't, so no Profile item shows for them).
-	const profileHref = $derived(data.member ? `${base}/members/${data.member.id}` : undefined);
+	const profileHref = $derived(data.member ? `${base}/members/${data.member.ref}` : undefined);
 
 	const isLanding = $derived($page.route.id === '/group/[slug]');
 	// The anon home splash, but at /home so signed-in users can view it (guests are
@@ -34,7 +34,7 @@
 	// directory, profile, admin, etc. The landing + guest/non-member pages keep
 	// the top-nav shell.
 	const useSidebar = $derived(signedInMember && !isLanding);
-	const settingsHref = $derived(data.member ? `${base}/members/${data.member.id}/edit` : undefined);
+	const settingsHref = $derived(data.member ? `${base}/members/${data.member.ref}/edit` : undefined);
 
 	let drawerOpen = $state(false);
 
@@ -68,7 +68,6 @@
 				groupName={data.group.name}
 				memberCount={data.memberCount}
 				userEmail={data.user?.email ?? ''}
-				userGravatarHash={data.userGravatarHash}
 				userAvatarId={data.userAvatarId}
 				buildSha={data.buildSha}
 				coreTag={data.coreTag}
@@ -97,7 +96,6 @@
 					groupName={data.group.name}
 					memberCount={data.memberCount}
 					userEmail={data.user?.email ?? ''}
-					userGravatarHash={data.userGravatarHash}
 					userAvatarId={data.userAvatarId}
 					buildSha={data.buildSha}
 					coreTag={data.coreTag}

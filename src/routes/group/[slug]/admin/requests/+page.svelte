@@ -19,9 +19,6 @@
 			};
 		};
 
-	// A detail whose value is an http(s) URL (e.g. LinkedIn) renders as a link.
-	const isUrl = (v: string) => /^https?:\/\//i.test(v.trim());
-
 	const day = new Intl.DateTimeFormat('en', { dateStyle: 'medium' });
 </script>
 
@@ -128,9 +125,10 @@
 								<div class="flex min-w-0 gap-2">
 									<dt class="shrink-0 text-gray-500 dark:text-neutral-400">{d.label}:</dt>
 									<dd class="min-w-0 break-words text-gray-800 dark:text-neutral-200">
-										{#if isUrl(d.value)}
+										<!-- The server sets href only where the profile save check passes. -->
+										{#if d.href}
 											<a
-												href={d.value}
+												href={d.href}
 												target="_blank"
 												rel="noopener noreferrer"
 												class="text-link hover:underline">{d.value}</a

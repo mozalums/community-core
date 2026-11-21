@@ -34,6 +34,16 @@ x-postgres-target: &postgres-target
   # server, at which point POSTGRES_SSL=true and a CA are the same deploy.
   POSTGRES_SSL: 'false'
 
+# journald, not json-file: json-file rotates by size, so a quiet month keeps
+# lines past the 30 days the privacy notice states. The host's journal ages out
+# at 30 days, and the community- tag is what its rsyslog rule matches to keep
+# these lines out of /var/log/syslog, which lives about 35. docs/operations.md,
+# "Logs", lists the host side; without it this driver alone enforces nothing.
+x-journald-logging: &journald-logging
+  driver: journald
+  options:
+    tag: 'community-{{.Name}}'
+
 services:
   lorem-host:
     build:
@@ -131,11 +141,7 @@ services:
       # deploy/nginx/example.conf.
       ADDRESS_HEADER: X-Forwarded-For
       XFF_DEPTH: '1'
-    logging:
-      driver: json-file
-      options:
-        max-size: '10m'
-        max-file: '5'
+    logging: *journald-logging
 
   postgres:
     image: *postgres-image
@@ -187,11 +193,7 @@ services:
       timeout: 3s
       retries: 12
       start_period: 30s
-    logging:
-      driver: json-file
-      options:
-        max-size: '10m'
-        max-file: '5'
+    logging: *journald-logging
 
   redis:
     image: redis:7.4-alpine
@@ -245,11 +247,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 12
-    logging:
-      driver: json-file
-      options:
-        max-size: '10m'
-        max-file: '5'
+    logging: *journald-logging
 
   # Never started by `docker compose up` — `profiles:` keeps it out of the
   # default set. It exists because the gating migration step has nowhere else to

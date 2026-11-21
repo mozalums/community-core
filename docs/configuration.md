@@ -76,6 +76,22 @@ Set the **apex**, not the full hostname — `example.org`, never `www.example.or
 
 Not derived from it: the magic-link **confirm** URLs (those follow the request origin, which is `ORIGIN` when it is set) and the community's own name, which comes from the skin's `site.name`. The mail sender is derived from it — `MAIL_FROM` defaults to `no-reply@<PUBLIC_BASE_DOMAIN>` — which means moving the apex without moving the DKIM key sends unsigned mail. See [Mail](#mail).
 
+### Passkeys (`auth.passkeys`)
+
+Passkey sign-in is a skin setting, not an environment variable: `auth.passkeys` in the skin's `skin.yaml`, a boolean that defaults to `true`, so leaving the key out leaves passkeys on. It is read at build time, so changing it takes a rebuild. With `false`, `/auth/passkey` and `/members/<id>/passkeys` return 404, the login page renders no passkey control, the email field's autocomplete goes back to `email`, and the profile edit page has no Passkeys card. Stored credentials stay in `passkey_credential` and work again if the key is switched back on. The magic link works either way. The key's row is in [skins](skin.md#sign-in), and the behavior in [features](features.md#passkeys).
+
+```yaml
+auth:
+  passkeys: false
+```
+
+The two hostname variables above decide where a passkey works:
+
+- **Relying party ID** is the apex, `PUBLIC_BASE_DOMAIN`. A browser binds every passkey to it when the passkey is made. **Moving the apex orphans every passkey**: none of them will sign in under the new one, and members fall back to the magic link and register again. Unlike the session cookies, those dead credentials do not lapse on their own. Each member removes theirs from the edit page, or an operator deletes the table's rows.
+- **Accepted origins** are `ORIGIN` and `https://www.<apex>`. An assertion signed on any other origin is refused, so an `ORIGIN` naming the wrong host fails passkey sign-in as surely as it fails form actions.
+
+A browser offers WebAuthn only in a secure context: HTTPS, or `localhost` and its subdomains. A local run needs a `*.localhost` name for both variables, for example `PUBLIC_BASE_DOMAIN=f08.localhost` and `ORIGIN=http://www.f08.localhost:5899`.
+
 ### Session cookie name (`SESSION_COOKIE_NAME`)
 
 | Variable              | Value                                      | Notes                                                                      |
@@ -93,7 +109,7 @@ It lives in the same env file as the two variables above. The app refuses to sta
 
 - is not an RFC 6265 cookie token (letters, digits and ``!#$%&'*+-.^_`|~``; no spaces, `;`, `=` or quotes),
 - begins `__Host-`, a prefix browsers accept only on a cookie with no `Domain` attribute, which this one has, or
-- is a name the app already sets: `community_gate`, the [development gate](features.md#development-gate)'s cookie, or `community_utm` or `community_cohort`, the two marketing cookies.
+- is a name the app already sets: `community_gate`, the [development gate](features.md#development-gate)'s cookie, or `community_utm` or `community_cohort`, the two retired cookies. Earlier builds set those on every visitor; this one sets neither and expires either one a browser still presents.
 
 The value is read as written and never trimmed. Only a variable that is absent takes the default: `SESSION_COOKIE_NAME=` with nothing after it, or a value with a space or tab on either side, is not a cookie token and refuses to start. Delete the line to get the default.
 

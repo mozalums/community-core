@@ -20,16 +20,22 @@ const CLEAN_TO_GROUP: Record<string, string> = {
 	'/admin': `${PREFIX}/admin`,
 	'/admin/landing': `${PREFIX}/admin/landing`,
 	'/request': `${PREFIX}/request`,
+	'/join': `${PREFIX}/join`,
 	'/manifesto': `${PREFIX}/manifesto`,
-	'/code-of-conduct': `${PREFIX}/code-of-conduct`
+	'/code-of-conduct': `${PREFIX}/code-of-conduct`,
+	'/privacy': `${PREFIX}/privacy`
 };
 
 export const reroute: Reroute = ({ url }) => {
 	const exact = CLEAN_TO_GROUP[url.pathname];
 	if (exact) return exact;
-	// Clean sub-paths under the directory or admin (e.g. /members/<id>,
-	// /admin/requests) map onto the group route tree too.
-	if (url.pathname.startsWith('/members/') || url.pathname.startsWith('/admin/')) {
+	// Clean sub-paths under the directory, admin or an unfinished removal (e.g.
+	// /members/<id>, /admin/requests) map onto the group route tree too.
+	if (
+		url.pathname.startsWith('/members/') ||
+		url.pathname.startsWith('/admin/') ||
+		url.pathname.startsWith('/removal/')
+	) {
 		return `${PREFIX}${url.pathname}`;
 	}
 };

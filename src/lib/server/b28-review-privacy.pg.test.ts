@@ -114,6 +114,7 @@ for (const f of fixtures) {
 		}
 		const result = (await directory({
 			params: { slug: group.slug },
+			parent: async () => ({}),
 			locals: { user: reader },
 			url: new URL(
 				`https://example.org/group/${group.slug}/members?q=${encodeURIComponent(f.term)}`

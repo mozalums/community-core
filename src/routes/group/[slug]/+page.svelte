@@ -20,6 +20,9 @@
 				: signInHref($page.url.pathname, data.group.slug)
 	);
 
+	// A signed-in non-member is already past step one of joining.
+	const registerHref = $derived(data.user ? `${base}/request` : `${base}/join`);
+
 	const isGuest = $derived(!data.user);
 	let loginOpen = $state(false);
 
@@ -39,6 +42,7 @@
 <Landing
 	groupName={data.group.name}
 	{connectHref}
+	{registerHref}
 	landingHtml={data.landingHtml}
 	heroHtml={data.heroHtml}
 	bandHtml={data.bandHtml}

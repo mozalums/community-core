@@ -18,7 +18,8 @@ export const COPY_NAMES = [
 	'sidebar',
 	'affiliations-help',
 	'manifesto',
-	'code-of-conduct'
+	'code-of-conduct',
+	'privacy'
 ] as const;
 export type CopyName = (typeof COPY_NAMES)[number];
 
@@ -47,4 +48,20 @@ export function skinCopy(name: CopyName, dir: string = currentSkin().dir): strin
 /** Whether the skin ships the document, which decides its route and its link. */
 export function hasSkinCopy(name: CopyName, dir?: string): boolean {
 	return skinCopy(name, dir) !== '';
+}
+
+/**
+ * Where copy writes this, the page shows the group's active-member count, the
+ * number the signed-in sidebar shows. A count typed into copy is wrong the day
+ * after someone joins.
+ */
+export const MEMBER_COUNT = '{memberCount}';
+
+/**
+ * Rendered copy with the member count filled in. `count` runs only when the
+ * copy uses the token, so a skin that never shows the number never reads it.
+ */
+export async function withMemberCount(html: string, count: () => Promise<number>): Promise<string> {
+	if (!html.includes(MEMBER_COUNT)) return html;
+	return html.replaceAll(MEMBER_COUNT, (await count()).toLocaleString('en-US'));
 }

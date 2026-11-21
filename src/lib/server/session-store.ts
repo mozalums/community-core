@@ -18,17 +18,15 @@ const REFRESH_LOCK_TTL = 30; // seconds
 
 export const DEFAULT_SESSION_COOKIE_NAME = 'community_session';
 
-// The marketing hook's two cookies. They are host-only where the session
-// cookie is apex-scoped, so a session under either name would reach the server
-// as a second cookie of the same name, and the hook would read whichever the
-// browser listed first.
-export const UTM_COOKIE_NAME = 'community_utm';
-export const COHORT_COOKIE_NAME = 'community_cohort';
+// Cookies earlier builds set and this one expires wherever a browser still
+// presents them (hooks.server.ts). A session under either name would be
+// expired on every response, so both stay reserved for as long as they are
+// listed here.
+export const RETIRED_COOKIE_NAMES = ['community_utm', 'community_cohort'] as const;
 
 const RESERVED_COOKIE_NAMES: ReadonlyMap<string, string> = new Map([
 	[GATE_COOKIE_NAME, 'the site gate'],
-	[UTM_COOKIE_NAME, 'the marketing hook'],
-	[COHORT_COOKIE_NAME, 'the marketing hook']
+	...RETIRED_COOKIE_NAMES.map((name) => [name, 'the retired-cookie cleanup'] as const)
 ]);
 
 // RFC 6265 takes a cookie name to be an RFC 2616 token: visible ASCII with no
@@ -96,12 +94,22 @@ export type SessionUser = {
 	image: string;
 };
 
+/**
+ * How and when the session's holder proved who they are, recorded at mint.
+ * Absent on sessions minted before it existed, which were all magic links.
+ */
+export type SessionAuth = {
+	method: 'magic-link' | 'passkey' | 'email-change';
+	at: number;
+};
+
 export type SessionData = {
 	user: SessionUser;
 	accessToken: string;
 	idToken: string;
 	expiresAt: number;
 	profile: Record<string, unknown>;
+	auth?: SessionAuth;
 };
 
 export function generateSessionId(): string {

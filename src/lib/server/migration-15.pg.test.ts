@@ -173,6 +173,8 @@ test(
 		await inSchema(14, async (c) => {
 			const { groupId, memberId } = await sheetEra(c);
 			await c.query(m15.sql);
+			// The readers are today's, so the schema they read is today's too.
+			for (const m of MIGRATIONS.filter((x) => x.version > 15)) await c.query(m.sql);
 
 			const group = await getGroupBySlug('m15');
 			assert.equal(group?.id, groupId);

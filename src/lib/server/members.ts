@@ -3,12 +3,15 @@ import type { AuditEntry } from '$lib/server/audit-core';
 import { log } from '$lib/server/log';
 import { bindSubject } from '$lib/server/member-write';
 import { emailMd5, ensureAvatarRows } from '$lib/server/avatars';
+import { isUuid } from '$lib/group-nav';
 import {
 	CHECKED_SQL_VALUES,
 	DEFAULT_FIELD_SCHEMA,
+	filterFields,
 	isMembersVisibleKey,
 	membersVisibleKeys,
 	optionalFieldByRole,
+	filterColumn,
 	promotedKeys,
 	type FieldRole,
 	type PromotedColumn
@@ -27,6 +30,10 @@ export type Member = {
 	// Members-visible field values, keyed by field-schema key.
 	data: Record<string, unknown>;
 	status: string;
+	// The member's chosen profile URL name, when they picked one; else their
+	// profile lives at the uuid. Optional in the type so a fixture that predates
+	// usernames still describes a member without one.
+	username?: string | null;
 };
 
 type MemberRow = {
@@ -39,6 +46,7 @@ type MemberRow = {
 	linkedin: string | null;
 	data: Record<string, unknown>;
 	status: string;
+	username: string | null;
 };
 
 function mapMember(r: MemberRow): Member {
@@ -51,11 +59,12 @@ function mapMember(r: MemberRow): Member {
 		city: r.city,
 		linkedin: r.linkedin,
 		data: r.data ?? {},
-		status: r.status
+		status: r.status,
+		username: r.username ?? null
 	};
 }
 
-const SELECT_COLS = `id, group_id, email, ident_subject, name, city, linkedin, data, status`;
+const SELECT_COLS = `id, group_id, email, ident_subject, name, city, linkedin, data, status, username::text AS username`;
 
 // A member with the admin-only values, which only the single-profile read
 // loads. Lists and search never select private_data, so no directory payload
@@ -202,17 +211,42 @@ export function canEditMember(
 	return false;
 }
 
-// Single active member by id, scoped to the group (for the profile page).
+// Single active member, scoped to the group, by the `[id]` segment of a profile
+// URL: a uuid, the member's current username, or a username they retired. The
+// caller compares memberRef(result) with what it was given to tell the
+// canonical form from one that should redirect.
+//
+// A non-ASCII segment resolves to nothing before it reaches citext, whose case
+// fold would turn a look-alike (the Kelvin sign) into the ASCII name it mimics;
+// no username can hold one, so refusing it here hides no member.
 export async function getMemberById(
 	groupId: string,
-	id: string
+	ref: string
 ): Promise<MemberWithPrivate | null> {
-	const { rows } = await query<MemberRow & { private_data: Record<string, unknown> | null }>(
-		`SELECT ${SELECT_COLS}, private_data
-		   FROM member
-		  WHERE group_id = $1 AND id = $2 AND status = 'active'`,
-		[groupId, id]
-	);
+	// eslint-disable-next-line no-control-regex
+	if (/[^\x00-\x7f]/.test(ref)) return null;
+	type Row = MemberRow & { private_data: Record<string, unknown> | null };
+	const cols = SELECT_COLS.split(', ')
+		.map((c) => `m.${c}`)
+		.join(', ');
+	const { rows } = isUuid(ref)
+		? await query<Row>(
+				`SELECT ${cols}, m.private_data
+				   FROM member m
+				  WHERE m.group_id = $1 AND m.id = $2 AND m.status = 'active'`,
+				[groupId, ref]
+			)
+		: await query<Row>(
+				`SELECT ${cols}, m.private_data
+				   FROM member m
+				  WHERE m.group_id = $1 AND m.status = 'active'
+				    AND (m.username = $2
+				         OR m.id = (SELECT r.member_id FROM member_username_retired r
+				                     WHERE r.group_id = $1 AND r.username = $2))
+				  ORDER BY (m.username = $2) DESC NULLS LAST
+				  LIMIT 1`,
+				[groupId, ref]
+			);
 	const r = rows[0];
 	return r ? { ...mapMember(r), privateData: r.private_data ?? {} } : null;
 }
@@ -247,17 +281,16 @@ const RESULT_CAP = 200;
 // gets its own OR block, AND'd with the others. So "london fellow" means
 // London AND Fellow, not "London, and never mind the rest".
 //
-// A word's OR block is every way one word can match: a websearch tsquery over
-// visible_tsv (whole words; also drives ranking), a
-// case-insensitive SUBSTRING (ILIKE) on name/city/linkedin AND every data
-// field VALUE (handle, projects, companies, country, …) so a fragment like
-// "popcorn" finds "popcornjs", and a trigram match on name/city/handle for typo
-// tolerance. A data value or a checkbox is searched only under a key
-// membersVisibleKeys names, the set the profile shows a non-admin, so a value
-// left in `data` under a key the skin has since made private is not searchable
-// even though no write path puts one there. Only values are searched (never
-// the keys), so "country" doesn't match every row. Naming a checkbox field by
-// its label (fellow, volunteer, …) matches members who have it checked.
+// A word's OR block is every way one word can match exactly: a websearch
+// tsquery over visible_tsv (whole words), a case-insensitive SUBSTRING (ILIKE)
+// on name/city/linkedin AND every data field VALUE (handle, projects,
+// companies, country, …) so a fragment like "popcorn" finds "popcornjs". A data
+// value or a checkbox is searched only under a key membersVisibleKeys names,
+// the set the profile shows a non-admin, so a value left in `data` under a key
+// the skin has since made private is not searchable even though no write path
+// puts one there. Only values are searched (never the keys), so "country"
+// doesn't match every row. Naming a checkbox field by its label (fellow,
+// volunteer, …) matches members who have it checked.
 //
 // The word reaches every ILIKE with `%`, `_` and `\` escaped. Unescaped, they
 // are wildcards, and the result count turns any searchable value into one a
@@ -266,26 +299,84 @@ const RESULT_CAP = 200;
 // Fields are found by role, never by key text: the tenure span reads whatever
 // field holds tenureStart and tenureEnd, the trigram whatever holds handle.
 //
-// A word at a time is what makes those last two work for a multi-word query:
-// against the whole phrase, no field holds "london fellow" as a substring and
-// no column is named it, so the only clause that could still fire was the
-// trigram one — and `similarity('London', 'london fellow')` cleared the 0.3
-// threshold. Every London member came back as a Fellow match.
+// A word at a time is what makes the year and checkbox clauses work for a
+// multi-word query: against the whole phrase, no field holds "london fellow"
+// as a substring and no column is named it.
 //
 // AND can find nothing, though, where the old OR always found something. If no
 // member matches every word, the search runs again joining the same blocks with
 // OR and reports `relaxed` so the page can say the terms were loosened rather
-// than quietly answering a different question. Results are ranked (ts_rank when
-// free text present) and capped — at alumni scale paging isn't needed yet, but
-// the cap bounds it.
-export type MemberSearch = { members: Member[]; relaxed: boolean };
+// than quietly answering a different question.
+//
+// Trigram similarity (pg_trgm `%`, threshold 0.3) on name, city and handle is
+// there to forgive a misspelt name, and it runs only when the exact passes
+// found nobody, reported as `fuzzy`. In the same block as the exact clauses it
+// let any short value sharing three letters with a word through: "carlo"
+// against "cars" scores about 0.375, so every Carlo answered a search for cars.
+//
+// Each hit carries `matched`: per visible field, the query words its value
+// held, so a tile can say why the member is there. It reads the same key list
+// as the match clauses, so a private field never matches and is never named.
+//
+// `filters` are field filters: each names a field the skin marks
+// `filter: exact` and a value, and matches only members whose stored value
+// for that field equals it, case-insensitive after NFKC and trim. A key that
+// is not such a field is dropped here as well as by the caller. Filters sit in
+// the WHERE beside `group_id`, outside the word blocks, so neither the relaxed
+// nor the fuzzy pass loosens them: with a filter and no match, the answer is
+// nobody.
+//
+// Results are ranked whole-word name match first, then any other whole-word
+// match, then a substring match, then ts_rank, then name, and capped: at
+// alumni scale paging isn't needed yet, but the cap bounds it.
+export type SearchMatch = { label: string; words: string[] };
+
+// The query as words: NFKC turns compatibility forms (fullwidth letters,
+// ligatures) into the characters stored text uses, then lowercase, then
+// whitespace. A token with no letter or digit (an emoji, a lone dash) holds
+// nothing a field could match, and as its own AND'd block it would empty the
+// results, so it is dropped. A query that drops every token searches nothing.
+// A tile shows the word as typed, so each token keeps its case beside the
+// form it matches with; lowercasing adds or removes no whitespace, so the two
+// splits line up.
+type QueryWord = { term: string; typed: string };
+function queryWords(q: string | undefined): QueryWord[] {
+	const nfkc = (q ?? '').normalize('NFKC');
+	const typed = nfkc.split(/\s+/u);
+	return nfkc
+		.toLowerCase()
+		.split(/\s+/u)
+		.map((term, i) => ({ term, typed: typed[i] }))
+		.filter((w) => /[\p{L}\p{N}]/u.test(w.term));
+}
+export const searchTokens = (q: string | undefined): string[] => queryWords(q).map((w) => w.term);
+export type SearchHit = Member & { matched: SearchMatch[] };
+export type MemberSearch = { members: SearchHit[]; relaxed: boolean; fuzzy: boolean };
+export type FieldFilter = { key: string; value: string };
+
+// What String.prototype.trim strips, as a PostgreSQL regex. The query and the
+// profile trim in JavaScript, so a stored value folded for an exact filter has
+// to lose the same characters; PostgreSQL's \s keeps U+FEFF, and a value
+// padded with it would show on the profile and never be found by its link.
+const JS_TRIM_PATTERN = (() => {
+	let cls = '';
+	for (let c = 1; c <= 0xffff; c++) {
+		if (String.fromCharCode(c).trim() === '') cls += `\\u${c.toString(16).padStart(4, '0')}`;
+	}
+	return `^[${cls}]+|[${cls}]+$`;
+})();
 
 export async function searchMembers(
 	groupId: string,
-	opts: { city?: string; q?: string }
+	opts: { city?: string; q?: string; filters?: readonly FieldFilter[] }
 ): Promise<MemberSearch> {
-	const city = opts.city?.trim();
-	const q = opts.q?.trim();
+	const city = opts.city?.normalize('NFKC').trim();
+	const filterable = filterFields();
+	const filters = (opts.filters ?? []).flatMap(({ key, value }) => {
+		const f = filterable.find((x) => x.key === key);
+		const v = value.normalize('NFKC').trim();
+		return f && v ? [{ field: f, value: v }] : [];
+	});
 
 	// A role or typed column reaches the query only when the profile shows
 	// every field behind it to a non-admin. A private one reads as absent, so a
@@ -301,6 +392,7 @@ export async function searchMembers(
 	};
 	const columns = (['name', 'city', 'linkedin'] as const).filter(columnSearchable);
 	const searchesCity = columns.includes('city');
+	const trigramColumns = columns.filter((c) => c !== 'linkedin');
 
 	// A year filters on the tenure span, which takes both of the skin's tenure
 	// fields. Without them a year is a word like any other.
@@ -308,51 +400,44 @@ export async function searchMembers(
 	const tenureEnd = visibleRole('tenureEnd');
 	const handle = visibleRole('handle');
 	const isYear = (t: string) => !!tenureStart && !!tenureEnd && /^(19|20)\d{2}$/.test(t);
-	const tokens = q ? q.split(/\s+/).filter(Boolean) : [];
-	const years = tokens.filter(isYear);
-	const terms = tokens.filter((t) => !isYear(t));
+	const tokens = queryWords(opts.q);
+	const years = tokens.map((w) => w.term).filter(isYear);
+	const wordTokens = tokens.filter((w) => !isYear(w.term));
+	const terms = wordTokens.map((w) => w.term);
+	const typedTerms = wordTokens.map((w) => w.typed);
 
-	// The members-visible checkboxes whose label contains the word, so "fell"
-	// finds everyone who ticked Fellow.
-	const checkboxKeysNamed = (t: string) =>
-		DEFAULT_FIELD_SCHEMA.filter(
-			(f) =>
-				f.type === 'checkbox' &&
-				isMembersVisibleKey(f.key) &&
-				f.label.toLowerCase().includes(t.toLowerCase())
-		).map((f) => f.key);
-	const like = (t: string) => `%${t.replace(/[\\%_]/g, '\\$&')}%`;
-
-	// Every way a single word can match a member. `p` is the placeholder holding
-	// that word — one word, never the phrase, which is the whole point.
-	const field = (keyParam: string) => `member.data->>${keyParam}`;
-	const termBlock = (
-		p: string,
-		sub: string,
-		checkboxKeys: string,
-		visibleKeys: string,
-		handleKey: string | null
-	) => {
-		return `(
-			visible_tsv @@ websearch_to_tsquery('simple', ${p})
-			${columns.map((c) => `OR ${c} ILIKE ${sub} ESCAPE '\\'`).join('\n')}
-			OR EXISTS (
-			     SELECT 1 FROM jsonb_each_text(member.data) AS f(k, v)
-			      WHERE f.k = ANY(${visibleKeys}::text[]) AND v ILIKE ${sub} ESCAPE '\\'
-			   )
-			OR EXISTS (
-			     SELECT 1 FROM unnest(${checkboxKeys}::text[]) AS c(k)
-			      WHERE lower(btrim(coalesce(${field('c.k')}, ''))) IN ${CHECKED_SQL}
-			   )
-			${columns
-				.filter((c) => c !== 'linkedin')
-				.map((c) => `OR ${c} % ${p}`)
-				.join('\n')}
-			${handleKey ? `OR coalesce(${field(handleKey)}, '') % ${p}` : ''}
-		)`;
+	// What a tile calls a field. A key that feeds a searched column is named by
+	// the column, so a match on "givenName" reads as Name, once.
+	const labelOf = (key: string) => DEFAULT_FIELD_SCHEMA.find((f) => f.key === key)?.label ?? key;
+	const columnLabel = (c: PromotedColumn) => {
+		const keys = promotedKeys(c);
+		return keys.length === 1 || c !== 'name' ? labelOf(keys[0]) : 'Name';
 	};
+	const columnOf = new Map(columns.flatMap((c) => promotedKeys(c).map((k) => [k, c] as const)));
+	const visible = membersVisibleKeys();
+	const visibleLabels = visible.map((k) => {
+		const c = columnOf.get(k);
+		return c ? columnLabel(c) : labelOf(k);
+	});
 
-	const run = async (join: 'AND' | 'OR'): Promise<Member[]> => {
+	// Every members-visible checkbox. Which of them a word names is decided in
+	// SQL, under the same fold as every other comparison, so "fell" finds
+	// everyone who ticked Fellow and an accent on either side changes nothing.
+	const boxes = DEFAULT_FIELD_SCHEMA.filter(
+		(f) => f.type === 'checkbox' && isMembersVisibleKey(f.key)
+	);
+	// Both sides of every comparison fold the same way: NFC, so a value an
+	// older import stored decomposed still matches; lowercase; then accents
+	// off. Stored data is never rewritten. A word is folded before it is
+	// escaped for ILIKE, and both happen in SQL, because unaccent can turn a
+	// character into a wildcard or the escape (∖ reads as a backslash).
+	const fold = (value: string) => `search_unaccent(lower(normalize(${value}, NFC)))`;
+	const likeOf = (p: string) =>
+		`('%' || regexp_replace(search_unaccent(${p}), '([\\\\%_])', '\\\\\\1', 'g') || '%')`;
+	const field = (keyParam: string) => `member.data->>${keyParam}`;
+	const isTrue = (b: string) => `coalesce((${b}), FALSE)`;
+
+	const run = async (join: 'AND' | 'OR', fuzzy: boolean): Promise<SearchHit[]> => {
 		const where: string[] = [`group_id = $1`, `status = 'active'`];
 		const params: unknown[] = [groupId];
 		const param = (v: unknown) => {
@@ -360,8 +445,25 @@ export async function searchMembers(
 			return `$${params.length}`;
 		};
 
+		// The field's own value, as the profile links it: the city column for
+		// the city field (filterColumn), else the data value at its key. A blank value folds to
+		// '' or NULL, and a filter value is never blank, so it matches nothing.
+		if (filters.length) {
+			const trim = param(JS_TRIM_PATTERN);
+			const exactFold = (v: string) =>
+				`lower(regexp_replace(normalize(${v}, NFKC), ${trim}, '', 'g'))`;
+			for (const { field: f, value } of filters) {
+				const data = exactFold(`member.data->>${param(f.key)}`);
+				const own = filterColumn(f);
+				const stored = own ? `coalesce(nullif(${exactFold(`member.${own}`)}, ''), ${data})` : data;
+				where.push(`${stored} = ${exactFold(param(value))}`);
+			}
+		}
+
 		if (city) {
-			where.push(searchesCity ? `city ILIKE ${param(like(city))} ESCAPE '\\'` : 'FALSE');
+			where.push(
+				searchesCity ? `${fold('city')} ILIKE ${likeOf(param(city))} ESCAPE '\\'` : 'FALSE'
+			);
 		}
 
 		// With no free text there's no relevance score. It can't be `0` (a bare
@@ -369,20 +471,28 @@ export async function searchMembers(
 		// bare `NULL` (rejected as a non-integer constant); a typed NULL sorts all
 		// rows equal so the name/email tiebreak orders them.
 		let rankExpr = `NULL::float`;
+		let order: string[] = [];
+		let matchedExpr = `'[]'::jsonb`;
 		const and: string[] = [];
 
 		// One tenure-span clause per year, always AND'd — a year is a filter in
-		// both passes, never something the fallback loosens.
+		// both passes, never something the fallback loosens. A bound that is
+		// missing, empty or not four digits is open on its side (no end year
+		// means still around), but at least one bound must be a valid year. The
+		// CASE keeps the cast away from non-year text, which an OR does not
+		// promise, and coalesce keeps a missing bound from turning the clause
+		// NULL, which WHERE would drop.
 		if (years.length && tenureStart && tenureEnd) {
 			const start = field(param(tenureStart.key));
 			const end = field(param(tenureEnd.key));
+			const valid = (v: string) => `coalesce((${v}) ~ '^[0-9]{4}$', false)`;
 			for (const y of years) {
 				const yr = param(Number(y));
 				and.push(
 					`(
-					  ((${start}) ~ '^[0-9]{4}$' OR (${end}) ~ '^[0-9]{4}$')
-					  AND ((${start}) !~ '^[0-9]{4}$' OR (${start})::int <= ${yr})
-					  AND ((${end}) !~ '^[0-9]{4}$' OR (${end})::int >= ${yr})
+					  (${valid(start)} OR ${valid(end)})
+					  AND CASE WHEN ${valid(start)} THEN (${start})::int <= ${yr} ELSE TRUE END
+					  AND CASE WHEN ${valid(end)} THEN (${end})::int >= ${yr} ELSE TRUE END
 					)`
 				);
 			}
@@ -390,51 +500,203 @@ export async function searchMembers(
 
 		let from = 'member';
 		if (terms.length) {
-			const handleKey = handle ? param(handle.key) : null;
-			const visibleKeys = param(membersVisibleKeys());
+			const visibleKeys = param(visible);
+			// Whether a value is words follows the type its field declares. A
+			// checkbox stores a marker ("on", "TRUE") that would match every
+			// member who ticked it, so its label carries it instead; any other
+			// field's text is words, even when it spells a marker.
+			const checkboxKeys = param(
+				visible.filter((k) => DEFAULT_FIELD_SCHEMA.find((f) => f.key === k)?.type === 'checkbox')
+			);
+			const lexicalText = (k: string, v: string) => `CASE WHEN ${k} = ANY(${checkboxKeys}::text[])
+			    THEN member_search_values(jsonb_build_object(${k}, ${v}))
+			    ELSE coalesce(${v} #>> '{}', '') END`;
+			const labels = param(visibleLabels);
+			const boxKeys = param(boxes.map((f) => f.key));
+			const boxLabels = param(boxes.map((f) => f.label));
+			const handleKey = fuzzy && handle ? param(handle.key) : null;
+			const nameKeys = param(promotedKeys('name').filter((k) => isMembersVisibleKey(k)));
+			const colLabel = Object.fromEntries(columns.map((c) => [c, param(columnLabel(c))]));
 			// The stored search_tsv indexes every value in data, whatever its key,
 			// so whole-word matching and ranking read this one instead: the same
 			// expression over the allowlisted keys alone. The ILIKE clauses already
 			// scan every row, so giving up the GIN index costs no plan it had.
 			from = `member CROSS JOIN LATERAL (
-			    SELECT to_tsvector('simple',
+			    SELECT to_tsvector('simple', ${fold(`
 			        ${columns.map((c) => `coalesce(${c}, '') || ' ' || `).join('')}
-			        member_search_values((
-			            SELECT coalesce(jsonb_object_agg(e.k, e.v), '{}'::jsonb)
-			              FROM jsonb_each(member.data) AS e(k, v)
-			             WHERE e.k = ANY(${visibleKeys}::text[])
-			        ))) AS visible_tsv
+			        (SELECT coalesce(string_agg(${lexicalText('e.k', 'e.v')}, ' '), '')
+			           FROM jsonb_each(member.data) AS e(k, v)
+			          WHERE e.k = ANY(${visibleKeys}::text[])
+			        )`)}) AS visible_tsv
 			  ) AS vis`;
-			const blocks = terms.map((t) =>
-				termBlock(param(t), param(like(t)), param(checkboxKeysNamed(t)), visibleKeys, handleKey)
+
+			// Every way one word can match a member, per visible field: whole
+			// word, substring, and in the typo pass trigram. The WHERE block, the
+			// labels a tile shows and the rank tiers are all built from these, so a
+			// member is never let in by a reason that names no field or ranks in a
+			// tier its fields don't support. `p` holds one word, never the phrase.
+			const words = terms.map((t) => {
+				const p = param(t);
+				const sub = likeOf(p);
+				const tsq = `websearch_to_tsquery('simple', search_unaccent(${p}))`;
+				// A word typed as "-x" parses to a negation, which every field lacking
+				// x satisfies. It stays a filter on the whole member over visible_tsv,
+				// AND'd in both passes like a year, so the relaxed pass never turns
+				// it into a reason to include. No field matched it: it names none and
+				// lifts no rank tier. querytree() reads 'T' for a negation-only query.
+				const negated = `querytree(${tsq}) = 'T'`;
+				// A whole-word match is member-wide, as the word was typed: one
+				// token can parse to several lexemes ("astronomy,cars" reads as
+				// astronomy <-> cars), and those may sit in different fields. A
+				// field takes part in it when it holds one of the token's lexemes,
+				// which inside one token are all required, never negated.
+				const lexemes = `tsvector_to_array(to_tsvector('simple', search_unaccent(${p})))`;
+				const whole = (text: string) =>
+					`(visible_tsv @@ ${tsq} AND tsvector_to_array(to_tsvector('simple', ${fold(text)})) && ${lexemes})`;
+				const unlessNegated = (x: string) => `(NOT ${negated} AND ${x})`;
+				const substr = (text: string) => `${fold(text)} ILIKE ${sub} ESCAPE '\\'`;
+				const checked = (k: string) => `lower(btrim(coalesce(${field(k)}, ''))) IN ${CHECKED_SQL}`;
+				const any = (xs: string[]) => (xs.length ? `(${xs.join(' OR ')})` : 'FALSE');
+
+				// A data value is read the way visible_tsv reads it, so admission,
+				// labels and rank agree on which of its words count.
+				const keyText = lexicalText('l.k', 'member.data->l.k');
+				const colWhole = (c: PromotedColumn) => whole(`coalesce(${c}, '')`);
+				const colSub = (c: PromotedColumn) => substr(c);
+				const colClose = (c: PromotedColumn) =>
+					fuzzy && c !== 'linkedin' ? `${c} % ${p}` : 'FALSE';
+				const keyWhole = whole(keyText);
+				const keySub = substr(keyText);
+				const keyClose = handleKey
+					? `(l.k = ${handleKey} AND coalesce(${field('l.k')}, '') % ${p})`
+					: 'FALSE';
+				// A box takes part in a word only when its label holds the word, so
+				// a whole-word label match is the narrower case of a substring one.
+				const boxSub = substr('b.label');
+				const boxWhole = `(${boxSub} AND to_tsvector('simple', ${fold('b.label')}) @@ ${tsq})`;
+
+				const keys = (cond: string) => `EXISTS (
+					     SELECT 1 FROM unnest(${visibleKeys}::text[]) AS l(k) WHERE ${cond}
+					   )`;
+				const checkedBox = (cond: string) => `EXISTS (
+					     SELECT 1 FROM unnest(${boxKeys}::text[], ${boxLabels}::text[]) AS b(k, label)
+					      WHERE ${checked('b.k')} AND ${cond}
+					   )`;
+
+				// A checked box holds its label's words, so negating a label excludes
+				// everyone who ticked it. The label is read as for a positive word,
+				// a substring gate then the whole word, with the "-" left off the gate.
+				const negatedBox = t.startsWith('-')
+					? checkedBox(`${fold('b.label')} ILIKE ${likeOf(param(t.replace(/^-+/, '')))} ESCAPE '\\'
+					      AND NOT to_tsvector('simple', ${fold('b.label')}) @@ ${tsq}`)
+					: 'FALSE';
+				const filter = `(NOT ${negated} OR (visible_tsv @@ ${tsq} AND NOT ${negatedBox}))`;
+
+				const wholeWord = unlessNegated(
+					any([...columns.map(colWhole), keys(keyWhole), checkedBox(boxWhole)])
+				);
+				// A checked box whose label merely contains the word ("fell" in
+				// Fellow) is a substring match; one whose label is the word ranked
+				// above as whole-word.
+				const substring = unlessNegated(
+					any([...columns.map(colSub), keys(keySub), checkedBox(boxSub)])
+				);
+				const close = unlessNegated(any([...columns.map(colClose), keys(keyClose)]));
+				const block = `(${wholeWord} OR ${substring} OR ${close})`;
+
+				// The labels of the fields this word matched, columns first, then
+				// data keys and checkboxes in schema order.
+				const colHit = (c: PromotedColumn) => `${colWhole(c)} OR ${colSub(c)} OR ${colClose(c)}`;
+				const matched = `CASE WHEN ${negated} THEN ARRAY[]::text[] ELSE array_remove(
+					ARRAY[${columns
+						.map((c) => `CASE WHEN ${colHit(c)} THEN ${colLabel[c]}::text END`)
+						.join(', ')}]::text[], NULL)
+					|| ARRAY(
+					     SELECT l.label
+					       FROM unnest(${visibleKeys}::text[], ${labels}::text[]) WITH ORDINALITY AS l(k, label, n)
+					      WHERE ${keyWhole} OR ${keySub} OR ${keyClose}
+					      ORDER BY l.n
+					   )
+					|| ARRAY(
+					     SELECT b.label
+					       FROM unnest(${boxKeys}::text[], ${boxLabels}::text[]) WITH ORDINALITY AS b(k, label, n)
+					      WHERE ${checked('b.k')} AND ${boxSub}
+					      ORDER BY b.n
+					   ) END`;
+				// The name tier reads every visible source of the name: the joined
+				// column when all its parts are visible, and the visible parts on
+				// their own, so a private family name neither demotes a matching
+				// given name nor lifts a member it alone would match.
+				const nameWord = unlessNegated(
+					any([
+						...(columns.includes('name') ? [colWhole('name')] : []),
+						keys(`l.k = ANY(${nameKeys}::text[]) AND ${keyWhole}`)
+					])
+				);
+				return { block, matched, nameWord, wholeWord, substring, negated, filter };
+			});
+			// A negated word stands aside from the join: true under AND, and under
+			// OR only when every word is negated, which leaves the filters to decide.
+			and.push(
+				join === 'AND'
+					? `(${words.map((w) => `(${w.block} OR ${w.negated})`).join(' AND ')})`
+					: `(${[...words.map((w) => w.block), `(${words.map((w) => w.negated).join(' AND ')})`].join(' OR ')})`
 			);
-			and.push(`(${blocks.join(` ${join} `)})`);
+			and.push(...words.map((w) => w.filter));
+			// An ARRAY constructor, not jsonb_build_array: a function takes at most
+			// 100 arguments, and a query may carry more words than that.
+			matchedExpr = `to_jsonb(ARRAY[${words.map((w) => `to_jsonb(${w.matched})`).join(', ')}]::jsonb[])`;
+			order = (['nameWord', 'wholeWord', 'substring'] as const).map(
+				(k) => `${isTrue(words.map((w) => `(${w[k]})`).join(' OR '))} DESC`
+			);
 			// Ranking reads the whole query even when the blocks are OR'd: a row
 			// that matched more of it outranks one that matched a single word.
 			params.push(terms.join(' '));
-			rankExpr = `ts_rank(visible_tsv, websearch_to_tsquery('simple', $${params.length}))`;
+			rankExpr = `ts_rank(visible_tsv, websearch_to_tsquery('simple', search_unaccent($${params.length})))`;
 		}
 
 		if (and.length) where.push(`(${and.join(' AND ')})`);
 
 		params.push(RESULT_CAP);
-		const { rows } = await query<MemberRow>(
-			`SELECT ${SELECT_COLS}
+		const { rows } = await query<MemberRow & { matched?: string[][] }>(
+			`SELECT ${SELECT_COLS}, ${matchedExpr} AS matched
 			   FROM ${from}
 			  WHERE ${where.join(' AND ')}
-			  ORDER BY ${rankExpr} DESC, lower(name) NULLS LAST, lower(email)
+			  ORDER BY ${[...order, `${rankExpr} DESC`, 'lower(name) NULLS LAST', 'lower(email)'].join(', ')}
 			  LIMIT $${params.length}`,
 			params
 		);
-		return rows.map(mapMember);
+		return rows.map((r) => ({ ...mapMember(r), matched: groupMatches(r.matched, typedTerms) }));
 	};
 
-	const members = await run('AND');
 	// Nothing to loosen unless there were several words to require at once: one
 	// word AND'd and OR'd is the same query, and an empty result for it is the
 	// honest answer.
-	if (members.length || terms.length < 2) return { members, relaxed: false };
+	const pass = async (fuzzy: boolean) => {
+		const members = await run('AND', fuzzy);
+		if (members.length || terms.length < 2) return { members, relaxed: false };
+		const any = await run('OR', fuzzy);
+		return { members: any, relaxed: any.length > 0 };
+	};
 
-	const any = await run('OR');
-	return { members: any, relaxed: any.length > 0 };
+	const exact = await pass(false);
+	if (exact.members.length || !terms.length || (!trigramColumns.length && !handle)) {
+		return { ...exact, fuzzy: false };
+	}
+	const close = await pass(true);
+	return { ...close, fuzzy: close.members.length > 0 };
+}
+
+// One entry per field label, carrying the query words that matched it, in the
+// order the labels first appear.
+function groupMatches(perWord: string[][] | undefined, terms: string[]): SearchMatch[] {
+	const out: SearchMatch[] = [];
+	(perWord ?? []).forEach((labels, i) => {
+		for (const label of labels ?? []) {
+			let m = out.find((x) => x.label === label);
+			if (!m) out.push((m = { label, words: [] }));
+			if (!m.words.includes(terms[i])) m.words.push(terms[i]);
+		}
+	});
+	return out;
 }

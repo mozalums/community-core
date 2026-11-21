@@ -53,6 +53,7 @@ async function directory(q: string): Promise<{ count: number; names: string[] }>
 	const out = (await load({
 		params: { slug: SLUG },
 		url: new URL(href),
+		parent: async () => ({}),
 		locals: { user: MEMBER }
 	} as unknown as Parameters<typeof load>[0])) as {
 		count: number;
@@ -111,6 +112,7 @@ test('the directory payload carries no data and no private value', opts, async (
 		const out = (await load({
 			params: { slug: SLUG },
 			url: new URL(href),
+			parent: async () => ({}),
 			locals: { user: MEMBER }
 		} as unknown as Parameters<typeof load>[0])) as { members: object[] };
 		assert.equal(out.members.length, 4);
@@ -118,9 +120,10 @@ test('the directory payload carries no data and no private value', opts, async (
 			assert.deepEqual(Object.keys(m).sort(), [
 				'avatarId',
 				'city',
-				'gravatarHash',
 				'id',
+				'matched',
 				'name',
+				'ref',
 				'starred'
 			]);
 		}
@@ -129,8 +132,12 @@ test('the directory payload carries no data and no private value', opts, async (
 });
 
 test('% and _ in the term are matched as themselves', opts, async () => {
-	assert.deepEqual((await directory('%')).names, ['Per Cent']);
-	assert.deepEqual((await directory('_')).names, ['Under Score']);
+	assert.deepEqual((await directory('100%')).names, ['Per Cent']);
+	// A lone wildcard has no letter or digit, so it searches nothing and the
+	// page lists everyone, as it would for an empty box.
+	const everyone = (await directory('')).names;
+	assert.deepEqual((await directory('%')).names, everyone);
+	assert.deepEqual((await directory('_')).names, everyone);
 	assert.deepEqual((await directory('+4477%')).names, []);
 	assert.deepEqual((await directory('z%z')).names, []);
 	assert.deepEqual((await directory('e_c')).names, ['Under Score']);

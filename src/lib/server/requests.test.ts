@@ -262,7 +262,7 @@ test('the admin card shows a prior denial beside the new request', async () => {
 	await submit();
 	await decide('deny', { id: pendingId(), reason: 'not an alum' });
 	await submit();
-	const { requests } = await admin.load({ params: { slug: 'moz' } });
+	const { requests } = await admin.load({ params: { slug: 'moz' }, locals: { user: ADMIN } });
 	assert.equal(requests.length, 1);
 	assert.equal(requests[0].priorDenials.length, 1);
 	assert.equal(requests[0].priorDenials[0].reason, 'not an alum');

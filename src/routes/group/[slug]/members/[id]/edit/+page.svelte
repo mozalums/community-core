@@ -1,10 +1,14 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { enhance } from '$app/forms';
+	import type { SubmitFunction } from '@sveltejs/kit';
 	import { page } from '$app/stores';
 	import Breadcrumbs from '$lib/components/Breadcrumbs.svelte';
 	import Gravatar from '$lib/components/Gravatar.svelte';
 	import Spinner from '$lib/components/Spinner.svelte';
+	import Passkeys from '$lib/components/Passkeys.svelte';
+	import EmailChange from '$lib/components/EmailChange.svelte';
+	import UsernameField from '$lib/components/UsernameField.svelte';
 	import { groupBase } from '$lib/group-nav';
 	import {
 		COUNTRIES,
@@ -12,15 +16,16 @@
 		SIZES,
 		DIALING_CODES,
 		CITIES_BY_COUNTRY,
-		dialingCodeLabel
+		matchDialingCode
 	} from '$lib/data/field-options';
+	import Combobox from '$lib/components/Combobox.svelte';
 	import type { PageData, ActionData } from './$types';
 
 	const { data, form }: { data: PageData; form: ActionData } = $props();
 
 	const base = $derived(groupBase($page.url.pathname, data.group.slug));
-	const profileHref = $derived(`${base}/members/${$page.params.id}`);
-	const avatarEndpoint = $derived(`${base}/members/${$page.params.id}/avatar`);
+	const profileHref = $derived(`${base}/members/${data.ref}`);
+	const avatarEndpoint = $derived(`${base}/members/${data.ref}/avatar`);
 
 	let saving = $state(false);
 
@@ -71,18 +76,48 @@
 		(form as { choices?: PageData['affiliations'] } | null)?.choices ?? data.affiliations
 	);
 	const saveError = $derived((form as { error?: string } | null)?.error ?? '');
+	const fieldError = $derived(
+		(form as { fieldError?: { name: string; message: string } } | null)?.fieldError
+	);
+	const errorFor = (name: string) => (fieldError?.name === name ? fieldError.message : '');
+
+	// A browser refuses a scheme-less value in a URL input before it posts, so
+	// "linkedin.com/in/x" gets the https:// the server would have given it:
+	// when typed, and when rendered, since a stored or echoed bare value left
+	// as it is would stop the whole form, unrelated fields included, from saving.
+	const withScheme = (v: string) => {
+		const t = v.trim();
+		return t && !/^[a-z][a-z\d+.-]*:/i.test(t) ? `https://${t}` : v;
+	};
+	function addScheme(e: Event) {
+		const input = e.currentTarget as HTMLInputElement;
+		input.value = withScheme(input.value);
+	}
 	const deleteError = $derived((form as { deleteError?: string } | null)?.deleteError ?? '');
+	const postedUsername = $derived((form as { username?: string } | null)?.username);
+	const released = $derived((form as { released?: string } | null)?.released ?? '');
+	const releaseError = $derived((form as { releaseError?: string } | null)?.releaseError ?? '');
 
 	// Guard the destructive delete behind a native confirm — abort if declined.
-	function confirmDelete(e: SubmitEvent) {
+	// A failure after the purge committed leaves no row for this page to load,
+	// so the retry lives on the removal page instead.
+	const enhanceDelete: SubmitFunction = ({ cancel }) => {
 		if (
 			!confirm(
 				'Delete your profile? This permanently removes your directory listing and signs you out. This cannot be undone.'
 			)
 		) {
-			e.preventDefault();
+			cancel();
+			return;
 		}
-	}
+		return async ({ result, update }) => {
+			if (result.type === 'failure' && result.data?.removalPending) {
+				window.location.assign(`${base}/removal/${data.id}`);
+				return;
+			}
+			await update();
+		};
+	};
 
 	// Bio renders on its own (top); private fields in their own section; the rest
 	// in the public grid.
@@ -103,10 +138,10 @@
 		['sizes', SIZES],
 		['dialingCodes', DIALING_CODES]
 	]);
-	// What an option reads as on screen, where that differs from the stored
-	// value. Only the dialling codes need it — see dialingCodeLabel.
-	const OPTION_LABELS = new Map<string, (o: string) => string>([
-		['dialingCodes', dialingCodeLabel]
+	// A list too long for a native select's type-ahead gets a filterable
+	// combobox, searched by this matcher.
+	const OPTION_SEARCH = new Map<string, (option: string, query: string) => boolean>([
+		['dialingCodes', matchDialingCode]
 	]);
 	// Keep an existing (possibly non-listed) value selectable so a swap never drops data.
 	const withCurrent = (list: string[], cur: string) =>
@@ -230,18 +265,31 @@
 		</select>
 	{:else if f.options && OPTION_LISTS.has(f.options)}
 		{@const cur = valueFor(f.name, f.value)}
-		{@const label = OPTION_LABELS.get(f.options) ?? ((o: string) => o)}
-		<select
-			id={`f-${f.name}`}
-			name={f.name}
-			required={f.required}
-			class="w-full rounded-md border-gray-300 bg-white text-sm text-black dark:border-neutral-600 dark:bg-neutral-800 dark:text-neutral-100"
-		>
-			<option value="" selected={!cur}>—</option>
-			{#each withCurrent(OPTION_LISTS.get(f.options) ?? [], cur) as o (o)}
-				<option value={o} selected={o === cur}>{label(o)}</option>
-			{/each}
-		</select>
+		{@const search = OPTION_SEARCH.get(f.options)}
+		{#if search}
+			<Combobox
+				id={`f-${f.name}`}
+				name={f.name}
+				label={f.label}
+				required={f.required}
+				options={withCurrent(OPTION_LISTS.get(f.options) ?? [], cur)}
+				value={cur}
+				match={search}
+				class="w-full rounded-md border-gray-300 bg-white text-sm text-black dark:border-neutral-600 dark:bg-neutral-800 dark:text-neutral-100"
+			/>
+		{:else}
+			<select
+				id={`f-${f.name}`}
+				name={f.name}
+				required={f.required}
+				class="w-full rounded-md border-gray-300 bg-white text-sm text-black dark:border-neutral-600 dark:bg-neutral-800 dark:text-neutral-100"
+			>
+				<option value="" selected={!cur}>—</option>
+				{#each withCurrent(OPTION_LISTS.get(f.options) ?? [], cur) as o (o)}
+					<option value={o} selected={o === cur}>{o}</option>
+				{/each}
+			</select>
+		{/if}
 	{:else if f.multiline}
 		<textarea
 			id={`f-${f.name}`}
@@ -252,6 +300,21 @@
 			value={valueFor(f.name, f.value)}
 			class="w-full rounded-md border-gray-300 bg-white text-sm text-black placeholder:text-gray-400 dark:border-neutral-600 dark:bg-neutral-800 dark:text-neutral-100 dark:placeholder:text-neutral-500"
 		></textarea>
+	{:else if f.url}
+		<input
+			id={`f-${f.name}`}
+			name={f.name}
+			type="url"
+			inputmode="url"
+			autocomplete="url"
+			required={f.required}
+			placeholder={f.placeholder ?? ''}
+			value={withScheme(valueFor(f.name, f.value))}
+			onchange={addScheme}
+			aria-invalid={errorFor(f.name) ? 'true' : undefined}
+			aria-describedby={errorFor(f.name) ? `f-${f.name}-error` : undefined}
+			class="w-full rounded-md border-gray-300 bg-white text-sm text-black placeholder:text-gray-400 dark:border-neutral-600 dark:bg-neutral-800 dark:text-neutral-100 dark:placeholder:text-neutral-500"
+		/>
 	{:else}
 		<input
 			id={`f-${f.name}`}
@@ -261,6 +324,11 @@
 			value={valueFor(f.name, f.value)}
 			class="w-full rounded-md border-gray-300 bg-white text-sm text-black placeholder:text-gray-400 dark:border-neutral-600 dark:bg-neutral-800 dark:text-neutral-100 dark:placeholder:text-neutral-500"
 		/>
+	{/if}
+	{#if errorFor(f.name)}
+		<p id={`f-${f.name}-error`} class="mt-1 text-sm text-red-600 dark:text-red-400">
+			{errorFor(f.name)}
+		</p>
 	{/if}
 {/snippet}
 
@@ -313,9 +381,10 @@
 				};
 			}}
 		>
-			<!-- Public card -->
+			<!-- Field cards stay unclipped (no overflow-hidden) so a combobox popup can
+			     extend past the card it opens in; nothing inside paints into the corners. -->
 			<div
-				class="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm dark:border-white/10 dark:bg-neutral-900"
+				class="rounded-xl border border-gray-200 bg-white shadow-sm dark:border-white/10 dark:bg-neutral-900"
 			>
 				<div class="border-b border-gray-100 px-6 py-5 dark:border-white/10">
 					<h2 class="text-xl font-bold">Public</h2>
@@ -338,12 +407,7 @@
 									class="size-16 rounded-full object-cover"
 								/>
 							{:else}
-								<Gravatar
-									hash={data.gravatarHash}
-									name={data.editName}
-									size={64}
-									avatarId={gravatarAvatarId}
-								/>
+								<Gravatar name={data.editName} size={64} avatarId={gravatarAvatarId} />
 							{/if}
 						</span>
 
@@ -398,6 +462,31 @@
 						a photo here replaces it, and removing yours from Gravatar clears it within the week.
 					</p>
 				</div>
+
+				{#if data.username}
+					<div
+						class="grid grid-cols-1 gap-1 border-b border-gray-100 px-6 py-5 dark:border-white/10 sm:grid-cols-3 sm:items-start sm:gap-4"
+					>
+						<label
+							for="f-username"
+							class="text-sm font-medium text-gray-900 dark:text-neutral-100 sm:pt-2"
+							>Username</label
+						>
+						<div class="sm:col-span-2">
+							<!-- Keyed on the action result so a second refusal with the same
+							     message still replaces a check answered in between. -->
+							{#key form}
+								<UsernameField
+									endpoint={`${base}/members/usernames`}
+									name={data.username.control}
+									value={postedUsername ?? data.username.value}
+									current={data.username.value}
+									error={errorFor(data.username.control)}
+								/>
+							{/key}
+						</div>
+					</div>
+				{/if}
 
 				{#if bioField}
 					<!-- Bio (the profile free-text slot, rendered as prose at the top of the card),
@@ -525,7 +614,7 @@
 			<!-- Private card — visually disconnected, darker grey. -->
 			{#if privateFields.length}
 				<div
-					class="overflow-hidden rounded-xl border border-gray-300 bg-gray-100 shadow-sm dark:border-white/10 dark:bg-neutral-800"
+					class="rounded-xl border border-gray-300 bg-gray-100 shadow-sm dark:border-white/10 dark:bg-neutral-800"
 				>
 					<div class="border-b border-gray-200 px-6 py-5 dark:border-white/10">
 						<h2 class="text-xl font-bold">Private</h2>
@@ -578,6 +667,65 @@
 			</div>
 		</form>
 
+		{#if data.emailChange}
+			<div class="mt-8">
+				<EmailChange
+					emailChange={data.emailChange}
+					endpoint={`${profileHref}/email`}
+					returnTo={$page.url.pathname}
+				/>
+			</div>
+		{/if}
+		{#if data.retiredUsernames?.length}
+			<!-- Admin only. A retired name redirects to this member and nobody else can
+			     claim it until released here. -->
+			<div
+				class="mt-8 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-white/10 dark:bg-neutral-900"
+			>
+				<h2 class="text-sm font-bold">Retired usernames</h2>
+				<p class="text-sm text-gray-500 dark:text-neutral-400">
+					Names this member gave up. Each still redirects to their profile and no one else can take
+					it. Releasing one ends the redirect and lets any member claim it.
+				</p>
+				<ul class="mt-3 space-y-2">
+					{#each data.retiredUsernames as name (name)}
+						<li class="flex items-center justify-between gap-3 text-sm">
+							<span class="font-mono">{name}</span>
+							<form method="POST" action="?/releaseUsername" use:enhance>
+								<input type="hidden" name="username" value={name} />
+								<button
+									type="submit"
+									class="rounded-md border border-gray-300 px-3 py-1 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-white/5"
+								>
+									Release
+								</button>
+							</form>
+						</li>
+					{/each}
+				</ul>
+			</div>
+		{/if}
+		{#if released || releaseError}
+			<p
+				aria-live="polite"
+				class="mt-2 text-sm {releaseError
+					? 'text-red-600 dark:text-red-400'
+					: 'text-gray-500 dark:text-neutral-400'}"
+			>
+				{releaseError || `Released ${released}.`}
+			</p>
+		{/if}
+
+		{#if data.passkeys}
+			<div class="mt-8">
+				<Passkeys
+					passkeys={data.passkeys}
+					endpoint={`${profileHref}/passkeys`}
+					returnTo={$page.url.pathname}
+				/>
+			</div>
+		{/if}
+
 		<br />
 		<br />
 
@@ -593,7 +741,7 @@
 						Permanently removes your directory listing and signs you out. This can't be undone.
 					</p>
 				</div>
-				<form method="POST" action="?/delete" onsubmit={confirmDelete} class="shrink-0">
+				<form method="POST" action="?/delete" use:enhance={enhanceDelete} class="shrink-0">
 					<button
 						type="submit"
 						class="rounded-md border border-red-300 bg-white px-4 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50 dark:border-red-900/40 dark:bg-neutral-900 dark:text-red-400 dark:hover:bg-red-950/30"

@@ -127,9 +127,9 @@ test('R1: the dead modules, the off-site sitemap line and the inamoon meta are g
 
 test('R2: both shipped skins are the four-entry directory and load; the default is Example Community on example.org', () => {
 	for (const dir of SHIPPED) {
-		// A community keeps its site's runbook, deploy files and maintainer list
+		// A community keeps its site's license, runbook, deploy files and maintainer list
 		// beside its skin; the loader reads none of them, and core's own skin has none.
-		const site = dir === COMMUNITY ? ['MAINTAINERS', 'RUNBOOK.md', 'deploy'] : [];
+		const site = dir === COMMUNITY ? ['LICENSE', 'MAINTAINERS', 'RUNBOOK.md', 'deploy'] : [];
 		assert.deepEqual(
 			readdirSync(dir)
 				.filter((e) => !site.includes(e))

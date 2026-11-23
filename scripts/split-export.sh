@@ -3,8 +3,7 @@
 # Splits one commit of the repository the current directory is in into the two
 # repositories it becomes:
 #
-#   <target-dir>/core  every tracked path except the community skin and skin-repository/,
-#                      plus skin-repository/'s guardrail workflow and its script
+#   <target-dir>/core  every tracked path except the community skin and skin-repository/
 #   <target-dir>/skin  the community skin's contents at its root, plus skin-repository/'s
 #
 # Usage: scripts/split-export.sh [--init --author 'Name <email>' --date <date>] <target-dir> [commit]
@@ -34,10 +33,10 @@
 set -euo pipefail
 
 readonly STARTER=skin-repository
-# Core runs the guardrail the skin repository does, until it turns public and
-# branch protection replaces it. The starter files' copy is the one exported:
-# a core that already carries one, as an exported core does when a skin
-# repository's CI stages its skin inside it, has that copy replaced.
+# Core is public, so branch protection enforces its reviews and the guardrail
+# is the skin repository's alone. A core that carries a copy, as an exported
+# core does when a skin repository's CI stages its .github inside it, has it
+# left out, so core never runs a second review check beside GitHub's.
 readonly GUARDRAIL=(.github/workflows/guardrail.yml .github/guardrail)
 readonly GITLEAKS_VERSION=8.30.1
 
@@ -109,10 +108,6 @@ clash=$(comm -12 \
 	<(git -C "$repo" ls-tree -r --name-only "$sha" -- "$skin/" | sed "s#^$skin/##" | sort) \
 	<(git -C "$repo" ls-tree -r --name-only "$sha" -- "$STARTER/" | sed "s#^$STARTER/##" | sort))
 [[ -z $clash ]] || die "$skin/ and $STARTER/ both carry: $(echo "$clash" | tr '\n' ' ')"
-for path in "${GUARDRAIL[@]}"; do
-	git -C "$repo" cat-file -e "$sha:$STARTER/$path" 2>/dev/null ||
-		die "${sha:0:12} has no $STARTER/$path: core's guardrail comes from there"
-done
 
 for repo_dir in "$target" "$target/core" "$target/skin"; do
 	[[ ! -e $repo_dir/.git ]] ||
@@ -131,8 +126,6 @@ git -C "$repo" archive --format=tar "$sha" -- "$skin/" |
 	tar -x -f - -C "$target/skin" --strip-components="$(($(tr -cd / <<<"$skin" | wc -c) + 1))"
 git -C "$repo" archive --format=tar "$sha" -- "$STARTER/" |
 	tar -x -f - -C "$target/skin" --strip-components=1
-git -C "$repo" archive --format=tar "$sha" -- "${GUARDRAIL[@]/#/$STARTER/}" |
-	tar -x -f - -C "$target/core" --strip-components=1
 
 check=$target/core/scripts/check-neutral.ts
 if [[ ! -f $check ]]; then

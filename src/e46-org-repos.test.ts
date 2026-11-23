@@ -340,7 +340,13 @@ const ci: { jobs: Record<string, Job> } = parse(read('.github/workflows/ci.yml')
 
 test('E46 R3: core CI runs the gate with the default skin and deploys nothing', () => {
 	assert.deepEqual(Object.keys(ci.jobs).sort(), [
-		'backup', 'build', 'changes', 'check', 'deploy', 'test', 'upgrade'
+		'backup',
+		'build',
+		'changes',
+		'check',
+		'deploy',
+		'test',
+		'upgrade'
 	]);
 	const runs = ci.jobs.check.steps.map((s) => s.run ?? '');
 	for (const command of ['pnpm check', 'pnpm build']) {
@@ -448,55 +454,48 @@ test('E46 R3: the upgrade check requires the ledger to hold every migration, not
 	assert.match(src, /export SKIN_DIR=\$released\/skin\/default/);
 });
 
-test('E46 R3: CODEOWNERS names a maintainer as custodian of src/lib/server, deploy and .github', () => {
-	const maintainers = read('MAINTAINERS')
-		.split('\n')
-		.map((l) => l.replace(/#.*/, '').trim())
-		.filter(Boolean);
-	assert.ok(maintainers.length > 0, 'MAINTAINERS lists nobody');
-	const owners = new Map(
-		read('.github/CODEOWNERS')
+test('E46 R3: CODEOWNERS gives every path to the maintainers MAINTAINERS lists', () => {
+	const logins = (text: string) =>
+		text
 			.split('\n')
-			.filter((l) => l.trim() && !l.startsWith('#'))
-			.map((l) => {
-				const [path, ...who] = l.trim().split(/\s+/);
-				return [path, who];
-			})
+			.map((l) => l.replace(/#.*/, '').trim())
+			.filter(Boolean);
+	const maintainers = logins(read('MAINTAINERS'));
+	assert.ok(maintainers.length > 0, 'MAINTAINERS lists nobody');
+	const rules = logins(read('.github/CODEOWNERS')).map((l) => l.split(/\s+/));
+	assert.deepEqual(
+		rules.map(([path]) => path),
+		['*'],
+		'CODEOWNERS has a rule besides the catch-all, which would hand a path to fewer maintainers'
 	);
-	for (const path of ['/src/lib/server/', '/deploy/', '/.github/']) {
-		const who = owners.get(path) ?? [];
-		assert.ok(who.length > 0, `${path} has no custodian`);
-		for (const login of who)
-			assert.ok(maintainers.includes(login.replace(/^@/, '')), `${login} is not in MAINTAINERS`);
-	}
+	assert.deepEqual(
+		rules[0]
+			.slice(1)
+			.map((l) => l.replace(/^@/, ''))
+			.sort(),
+		[...maintainers].sort(),
+		'CODEOWNERS and MAINTAINERS name different logins'
+	);
 });
 
-test("E46 R3: the export gives core the starter files' guardrail, replacing any copy core carries, and needs one to give", () => {
+test('E46 R3: the export leaves the guardrail out of core, even a copy core carries', () => {
 	const repo = monolith({
 		'.github/workflows/guardrail.yml': 'stale\n',
+		'.github/guardrail/guardrail.mjs': 'stale\n',
 		MAINTAINERS: 'someone\n'
 	});
 	const out = join(tmp(), 'split');
 	const r = split(repo, [out]);
 	assert.equal(r.status, 0, r.stderr);
-	assert.equal(
-		readFileSync(join(out, 'core/.github/workflows/guardrail.yml'), 'utf8'),
-		'name: Guardrail\n'
+	assert.ok(
+		!existsSync(join(out, 'core/.github/workflows/guardrail.yml')),
+		'core carries the workflow'
 	);
-	assert.equal(
-		readFileSync(join(out, 'core/.github/guardrail/guardrail.mjs'), 'utf8'),
-		'export {};\n'
-	);
+	assert.ok(!existsSync(join(out, 'core/.github/guardrail')), 'core carries the script');
 	assert.equal(readFileSync(join(out, 'core/MAINTAINERS'), 'utf8'), 'someone\n');
-
-	const bare = monolith();
-	git(bare, 'rm', '-r', '--quiet', `${STARTER}/.github/guardrail`);
-	git(bare, 'commit', '--quiet', '--message', 'no guardrail');
-	const refused = split(bare, [join(tmp(), 'split')]);
-	assert.equal(refused.status, 1);
-	assert.match(
-		refused.stderr,
-		/has no skin-repository\/\.github\/guardrail: core's guardrail comes from there/
+	assert.equal(
+		readFileSync(join(out, 'skin/.github/workflows/guardrail.yml'), 'utf8'),
+		'name: Guardrail\n'
 	);
 });
 
@@ -512,15 +511,14 @@ function workingTreeCommit(): string {
 }
 
 test(
-	"E46 R3: this tree's core carries CODEOWNERS, MAINTAINERS and the skin repository's guardrail byte for byte",
+	"E46 R3: this tree's core carries CODEOWNERS, MAINTAINERS and CI byte for byte, and no guardrail",
 	{ skip: notUnsplit },
 	() => {
 		const out = join(tmp(), 'split');
 		const r = split(ROOT, [out, workingTreeCommit()]);
 		assert.equal(r.status, 0, r.stderr);
-		for (const path of ['.github/workflows/guardrail.yml', '.github/guardrail/guardrail.mjs']) {
-			assert.equal(readFileSync(join(out, 'core', path), 'utf8'), read(`${STARTER}/${path}`), path);
-		}
+		for (const path of ['.github/workflows/guardrail.yml', '.github/guardrail'])
+			assert.ok(!existsSync(join(out, 'core', path)), `core carries ${path}`);
 		for (const path of [
 			'.github/CODEOWNERS',
 			'MAINTAINERS',
@@ -532,16 +530,21 @@ test(
 	}
 );
 
-test('E46 R3: docs/skin-repository.md says core swaps the guardrail for branch protection at the flip to public', () => {
+test('E46 R3: docs/skin-repository.md requires every CI job on core, and names the maintainers', () => {
 	const doc = read('docs/skin-repository.md');
-	assert.match(
-		doc,
-		/\*\*Core swaps the guardrail for branch protection at the flip to public\.\*\*/
-	);
-	assert.match(
-		doc,
-		/`CI \/ check` and `CI \/ upgrade` checks, then delete the guardrail workflow and its script/
-	);
+	const core = doc.slice(doc.indexOf("## Core's own repository"));
+	const workflow = parse(read('.github/workflows/ci.yml')) as {
+		jobs: Record<string, { strategy?: { matrix?: { shard?: number[] } } }>;
+	};
+	const checks = Object.keys(workflow.jobs).flatMap((j) => {
+		const shards = workflow.jobs[j].strategy?.matrix?.shard;
+		return shards ? shards.map((n) => `${j} (${n})`) : [j];
+	});
+	const required = core.match(/^- \*\*`main: checks`\*\*([^\n]*)/m)?.[1] ?? '';
+	for (const check of checks)
+		assert.ok(required.includes(`\`${check}\``), `${check} is not a required check`);
+	assert.match(core, /Nobody may bypass it/, 'the checks ruleset has a bypass');
+	assert.ok(core.includes('`* @mankins @ravinald`'), 'the CODEOWNERS rule is not named');
 	assert.match(
 		read('docs/upgrading.md'),
 		/The `upgrade` job in `\.github\/workflows\/ci\.yml` runs `scripts\/upgrade-check\.sh`/

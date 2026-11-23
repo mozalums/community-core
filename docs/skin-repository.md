@@ -9,6 +9,7 @@ skin.yaml  theme.css  copy/  static/      the skin, the four entries the image t
 deploy/                                   the site's vhosts, units and env template
 RUNBOOK.md                                the site's values and procedures
 MAINTAINERS                               logins that may approve pull requests
+LICENSE                                   the license of the site's own files
 .github/workflows/ci.yml                  validate, build, test, deploy
 .github/workflows/guardrail.yml           the review requirement
 .github/guardrail/guardrail.mjs           the guardrail's decision
@@ -28,7 +29,7 @@ scripts/split-export.sh --init --author 'Your Name <you@example.org>' --date 202
 # HEAD; or name a commit after the target
 ```
 
-`/tmp/split/core` is every tracked file except `skin/<id>` and `skin-repository/`, plus the starter files' guardrail workflow and script, so core runs the same review check the skin repository does. `/tmp/split/skin` is the contents of `skin/<id>` at its root plus the starter files. Both come from `git archive` of the commit, so nothing untracked, ignored or uncommitted reaches either, and two runs on one commit write identical trees. The target must not exist or must be empty, and a `.git` in it is refused by name. Before it reports success, the script runs the commit's own `scripts/check-neutral.ts` over the core tree; on any hit it prints them, removes both trees and exits 1.
+`/tmp/split/core` is every tracked file except `skin/<id>` and `skin-repository/`; core leaves out any guardrail workflow or script, because branch protection enforces its reviews. `/tmp/split/skin` is the contents of `skin/<id>` at its root plus the starter files. Both come from `git archive` of the commit, so nothing untracked, ignored or uncommitted reaches either, and two runs on one commit write identical trees. The target must not exist or must be empty, and a `.git` in it is refused by name. Before it reports success, the script runs the commit's own `scripts/check-neutral.ts` over the core tree; on any hit it prints them, removes both trees and exits 1.
 
 **`--init` makes each tree a new repository with exactly one commit and no remote**, so pushing it cannot publish the history of the repository it was split from: every earlier state of the code, the docs and the fixtures stays where it was. The commit's author and committer are both `--author`, its dates both `--date`, and git runs without your global or system configuration, so no hook, commit template or signing setup reaches it, and two runs on one commit produce the same commit ids. Both values are required.
 
@@ -102,6 +103,11 @@ When the repository moves to a plan with branch protection, make `Guardrail / ma
 
 ## Core's own repository
 
-Core starts private, so the same limits apply to it, and it carries the same guardrail: `.github/workflows/guardrail.yml` and `.github/guardrail/guardrail.mjs`, copied from the starter files by the export, with core's `MAINTAINERS` at its root. Its `.github/CODEOWNERS` names the custodians of `src/lib/server`, `deploy` and `.github`, which on the free plan only requests their review.
+Core is public, so the free plan gives it rulesets, and those enforce its reviews instead of the guardrail. The export leaves the guardrail out of core. Two rulesets cover `main`, split so that a maintainer can skip review without skipping CI:
 
-**Core swaps the guardrail for branch protection at the flip to public.** A public repository on the free plan gets branch protection, so when core turns public, protect `main` with a required pull request review, code owner review and the `CI / check` and `CI / upgrade` checks, then delete the guardrail workflow and its script. With both left in place, every pull request carries two review checks for one rule, and only GitHub's blocks the merge.
+- **`main: review`** requires a pull request with one approval from a code owner. `.github/CODEOWNERS` assigns every path to the maintainers (`* @mankins @ravinald`), and one approval from either is enough: GitHub asks for any one owner on a line, never all of them. `MAINTAINERS` lists the same logins for people reading the repository. The repository's admin role, which the maintainers hold, may bypass this ruleset from a pull request only, so a maintainer merges their own pull request without another review, the rule the guardrail applied before. GitHub never counts an author's approval of their own pull request, which is why this is a bypass and not an approval.
+- **`main: checks`** requires every job in `.github/workflows/ci.yml` to pass: `changes`, `check`, `test (1)`, `test (2)`, `test (3)`, `upgrade`, `build`, `deploy` and `backup`. Nobody may bypass it. A path-scoped job skipped on a pull request reports as skipped, which satisfies a required check, so requiring all of them costs a pull request nothing and holds one that touches `deploy/` to the `deploy` tests. Requiring only `check` would let a pull request with failing tests merge, since the tests run in the `test` jobs.
+
+A release reaches core as a pull request from a release branch, like any other change: no push to `main` can satisfy `main: checks`, because the checks run on a pull request.
+
+A job renamed or added in `ci.yml` has to be renamed or added in `main: checks` too: a required check that no job reports stays pending, and blocks every merge.

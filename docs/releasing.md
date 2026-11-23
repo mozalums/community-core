@@ -25,7 +25,7 @@ git tag --annotate "$tag" --message "$tag"
 git push origin main "$tag"
 ```
 
-The copy and the tag go on the same commit. While core is private, a maintainer pushes that commit to `main` directly; once branch protection is on, it lands through a pull request and the tag goes on the commit that reached `main`. Check the result before announcing it:
+The copy and the tag go on the same commit. It lands through a pull request from a release branch, because `main`'s rulesets accept no direct push, and the tag goes on the commit that reached `main`. Check the result before announcing it:
 
 ```bash
 git diff --exit-code "$tag:skin/default/skin.yaml" "$tag:src/lib/skin/released/$tag.yaml"

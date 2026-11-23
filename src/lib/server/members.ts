@@ -71,6 +71,9 @@ export type MemberWithPrivate = Member & {
 };
 
 const CHECKED_SQL = `(${CHECKED_SQL_VALUES.map((v) => `'${v}'`).join(', ')})`;
+// The values member_search_values (migrations.ts) drops as markers rather
+// than words; search reads checkbox values against the same list.
+const MARKER_SQL = `('true', 'false', 'yes', 'no', 'y', 'n', 'x', '1', '0', 'checked', 'on')`;
 
 export type PublicMember = {
 	id: string;
@@ -504,14 +507,16 @@ export async function searchMembers(
 			const checkboxKeys = param(
 				visible.filter((k) => DEFAULT_FIELD_SCHEMA.find((f) => f.key === k)?.type === 'checkbox')
 			);
-			// A links field's handles are read straight out of its list: the
-			// generic member_value_text tests each value with a subquery, and
-			// calling it per value per member made a search take seconds.
+			// Every value is read inline, never through member_search_values or
+			// member_value_text: those are SQL functions Postgres cannot inline
+			// (they aggregate), each call costs milliseconds, and calling them
+			// per value per member made a search take seconds.
 			const linksKeys = param(
 				visible.filter((k) => DEFAULT_FIELD_SCHEMA.find((f) => f.key === k)?.type === 'links')
 			);
 			const lexicalText = (k: string, v: string) => `CASE WHEN ${k} = ANY(${checkboxKeys}::text[])
-			    THEN member_search_values(jsonb_build_object(${k}, ${v}))
+			    THEN CASE WHEN lower(btrim(coalesce(${v} #>> '{}', ''))) IN ${MARKER_SQL}
+			              THEN '' ELSE coalesce(${v} #>> '{}', '') END
 			    WHEN ${k} = ANY(${linksKeys}::text[])
 			    THEN translate(jsonb_path_query_array(${v}, '$[*].handle')::text, '[]",', '    ')
 			    ELSE coalesce(${v} #>> '{}', '') END`;
@@ -525,6 +530,8 @@ export async function searchMembers(
 			// so whole-word matching and ranking read this one instead: the same
 			// expression over the allowlisted keys alone. The ILIKE clauses already
 			// scan every row, so giving up the GIN index costs no plan it had.
+			// OFFSET 0 keeps the planner from pulling the subquery up and
+			// recomputing visible_tsv at each of its references.
 			from = `member CROSS JOIN LATERAL (
 			    SELECT to_tsvector('simple', ${fold(`
 			        ${columns.map((c) => `coalesce(${c}, '') || ' ' || `).join('')}
@@ -532,6 +539,7 @@ export async function searchMembers(
 			           FROM jsonb_each(member.data) AS e(k, v)
 			          WHERE e.k = ANY(${visibleKeys}::text[])
 			        )`)}) AS visible_tsv
+			    OFFSET 0
 			  ) AS vis`;
 
 			// Every way one word can match a member, per visible field: whole

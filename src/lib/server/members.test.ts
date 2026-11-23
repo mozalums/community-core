@@ -180,7 +180,7 @@ test('ranking puts a whole-word name match, then any whole word, then a substrin
 	const at = (re: RegExp) => order.search(re);
 	const steps = [
 		/normalize\(coalesce\(name, ''\), NFC\)\)\)\)\) &&/,
-		/member_search_values\(jsonb_build_object/,
+		/IN \('true', 'false', 'yes'/,
 		/normalize\(name, NFC\)\)\) ILIKE/,
 		/ts_rank\(/,
 		/lower\(name\)/

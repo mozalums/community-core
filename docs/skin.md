@@ -352,7 +352,7 @@ The loader refuses a `links` field with no site, an id core does not define, an 
 
 A value is trimmed once, where it enters: the profile edit form, the request form and the CSV import.
 It is then either a profile address on the site's host, with or without `https://` or `http://` and `www.`, a trailing slash and a query, or the bare handle; the handle is what `social-links` extracts from it.
-Host and path are compared as written, so an address in capitals or with a fragment is refused; so is any address whose canonical form is not the one the handle renders as, such as a LinkedIn company page or a mobile-only host.
+The scheme and host are compared in lowercase and a fragment is dropped; the path is compared as written, and any address whose canonical form is not the one the handle renders as, such as a LinkedIn company page or a mobile-only host, is refused.
 `social-links` admits letters, digits, `_`, `-`, `.`, `%` and any non-ASCII character in a handle; core also refuses whitespace, control characters, lone surrogates, U+FFFE and U+FFFF, a handle made only of dots, and one over 100 characters.
 A refused value is reported with the site's name and the form it expects, for example `LinkedIn: the part after linkedin.com/in/`.
 A stored handle is never normalized again: on a save, an approval, an import or a render it is the same text, and reducing it again returns it unchanged.

@@ -11,13 +11,14 @@ const url = process.env.AUDIT_TEST_DATABASE_URL;
 const opts = { skip: url ? false : 'AUDIT_TEST_DATABASE_URL unset' };
 
 const { default: pg } = await import('pg');
+const statements: string[] = [];
 const pool = url ? new pg.Pool({ connectionString: url, max: 2 }) : null;
 const SLUG = 'b31-review-marker-words';
 const GROUP = { id: '', slug: SLUG, name: 'B31 search match', landingMd: null, status: 'active' };
 
 mock.module('$lib/server/postgres', {
 	namedExports: {
-		query: (text: string, values?: unknown[]) => pool!.query(text, values),
+		query: (text: string, values?: unknown[]) => (statements.push(text), pool!.query(text, values)),
 		withTransaction: async () => assert.fail('search writes nothing')
 	}
 });
@@ -97,4 +98,18 @@ test('R4 review: visible scalar text equal to a checkbox marker outranks a subst
     const page = await directory('no');
     assert.ok(!names(page).includes('Private No'));
     assert.deepEqual(names(page), ['Zoe West', 'Cora Reed']);
+});
+
+// member_search_values and its helpers are SQL functions Postgres cannot
+// inline; calling one per value per member made a 272-member search take
+// three seconds on dev, where the same text read inline takes 50 ms.
+test('search reads values inline, never through a per-value SQL function', opts, async () => {
+    statements.length = 0;
+    await directory('on');
+    const search = statements.filter((s) => s.includes('visible_tsv'));
+    assert.ok(search.length > 0);
+    for (const s of search) {
+        assert.doesNotMatch(s, /member_search_values|member_value_text|member_is_links/);
+        assert.match(s, /AS visible_tsv\s+OFFSET 0/);
+    }
 });

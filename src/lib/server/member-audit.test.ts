@@ -5,8 +5,7 @@ import { beforeEach, mock, test } from 'node:test';
 // row is the only record of who changed or removed a member. Driven against a
 // client that logs statements and transaction boundaries, so "on the
 // mutation's own transaction, before COMMIT" is asserted rather than assumed.
-// The real-Postgres rollback cases live in member-edit.pg.test.ts and
-// scripts/f04-audit-history-review.pg.test.ts.
+// The real-Postgres rollback cases live in member-edit.pg.test.ts.
 
 type Stmt = { text: string; values: unknown[]; inTx: boolean };
 const log: Stmt[] = [];

@@ -66,6 +66,7 @@ const login = await import(source('src/routes/(auth)/login/+page.server.ts'));
 const { PASSKEYS_ENABLED } = await import(source('src/lib/server/passkeys.ts'));
 const { render } = await import('svelte/server');
 const { default: LoginPage } = await import(source('src/routes/(auth)/login/+page.svelte'));
+const { default: LoginModal } = await import(source('src/lib/components/LoginModal.svelte'));
 
 const memberId = '00000000-0000-4000-8000-000000000001';
 const session = {
@@ -133,6 +134,13 @@ test('F8 R5: with auth.passkeys false the login page shows no passkey control', 
 	}).body;
 	assert.match(on, /Sign in with a passkey/);
 	assert.match(on, /autocomplete="username webauthn"/);
+});
+
+test('F8 R5: with auth.passkeys false the sign-in modal shows no passkey control', () => {
+	const html = render(LoginModal, { props: { open: true, callbackUrl: '/members' } }).body;
+	assert.match(html, /login-modal-email/, 'the modal did not render its form');
+	assert.doesNotMatch(html, /passkey/i, 'the sign-in modal mentions passkeys');
+	assert.match(html, /autocomplete="email"/);
 });
 
 mock.module('$lib/server/schema', { namedExports: { ensureSchema: async () => {} } });

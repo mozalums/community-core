@@ -94,6 +94,7 @@ A skin is a directory, selected at build time by `SKIN_DIR`, holding `skin.yaml`
 - [Operations](docs/operations.md): scripts on a host, backups and restore, container isolation, the reverse proxy, security headers and mail DNS.
 - [Upgrading](docs/upgrading.md): the public interface, and what each kind of release may change.
 - [Releasing](docs/releasing.md): tagging a core version, and moving a site's pin onto it.
+- [Testing](docs/testing.md): what each CI job catches, when it runs, and running the tests locally.
 - [Skin repository](docs/skin-repository.md): splitting a community's site into its own repository, its CI and review guardrail, and the GitHub settings they rely on.
 
 ## Built with

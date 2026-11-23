@@ -183,7 +183,7 @@ The policy is fixed when the app is built, so changing the block takes a rebuild
 
 `auth` switches platform sign-in features off. Every key in it is optional and on when left out, so a skin that predates it, or leaves it out, gets every feature.
 
-- **`passkeys`** offers passkey sign-in on the login page and passkey management on a member's own profile edit page. With `false`, the passkey endpoints return 404, the login page shows no passkey control, and the edit page shows no passkey section. Passkeys already stored stay in the database and come back if the key is switched on again. The magic link works either way. See [Passkeys](features.md#passkeys).
+- **`passkeys`** offers passkey sign-in on the login page and the landing page's sign-in modal, and passkey management on a member's own profile edit page. With `false`, the passkey endpoints return 404, neither sign-in form shows a passkey control, and the edit page shows no passkey section. Passkeys already stored stay in the database and come back if the key is switched on again. The magic link works either way. See [Passkeys](features.md#passkeys).
 
 ```yaml
 auth:

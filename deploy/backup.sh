@@ -71,13 +71,28 @@ readonly DUMP_PATTERN='*.age'
 # adds these up against the unit's TimeoutStartSec.
 readonly RCLONE_PROBE=(--contimeout 10s --timeout 10s --retries 1 --low-level-retries 2)
 readonly RCLONE_BOUNDED=(--contimeout 10s --timeout 60s --retries 1 --low-level-retries 3)
-readonly PROBE_DEADLINE=20 LIST_DEADLINE=60 DELETE_DEADLINE=120 UPLOAD_DEADLINE=900
+# Each deadline can be shortened from the environment (BACKUP_PROBE_DEADLINE
+# and so on), which is how the tests prove a cutoff fires without waiting out
+# the production one.
+seconds() {
+	local value=${!1:-$2}
+	[[ $value =~ ^[1-9][0-9]*$ ]] || {
+		echo "backup.sh: $1 must be a whole number of seconds; got \"$value\"" >&2
+		exit "$E_CONFIG"
+	}
+	printf '%s' "$value"
+}
+PROBE_DEADLINE=$(seconds BACKUP_PROBE_DEADLINE 20)
+LIST_DEADLINE=$(seconds BACKUP_LIST_DEADLINE 60)
+DELETE_DEADLINE=$(seconds BACKUP_DELETE_DEADLINE 120)
+UPLOAD_DEADLINE=$(seconds BACKUP_UPLOAD_DEADLINE 900)
 # curl's -m bounds one attempt, not the sleep between them, and a monitor's
 # Retry-After overrides --retry-delay: a 503 asking for 7200 waits two hours.
-readonly HEARTBEAT_DEADLINE=60
+HEARTBEAT_DEADLINE=$(seconds BACKUP_HEARTBEAT_DEADLINE 60)
 # Older queued dumps are not started once the upload phase has spent this long,
 # so a slow but working destination cannot spend the run's own dump's time.
-readonly STRAGGLER_BUDGET=600
+STRAGGLER_BUDGET=$(seconds BACKUP_STRAGGLER_BUDGET 600)
+readonly PROBE_DEADLINE LIST_DEADLINE DELETE_DEADLINE UPLOAD_DEADLINE HEARTBEAT_DEADLINE STRAGGLER_BUDGET
 
 REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 readonly REPO_ROOT

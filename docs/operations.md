@@ -54,6 +54,10 @@ older queued dumps        none started after 600 s of uploading
 heartbeat                  60 s    curl, 4 attempts of 15 s, cut off with any Retry-After sleep
 ```
 
+Each one is read from the environment when set, as a whole number of seconds: `BACKUP_PROBE_DEADLINE`, `BACKUP_UPLOAD_DEADLINE`, `BACKUP_LIST_DEADLINE`, `BACKUP_DELETE_DEADLINE`, `BACKUP_STRAGGLER_BUDGET` and `BACKUP_HEARTBEAT_DEADLINE`.
+Any other value stops the run with exit code `3`.
+The tests set them to 3 seconds to prove each cutoff fires; a host has no reason to set them.
+
 A destination that is dead from the start costs a run at most about 31 minutes: the probe, one older queued dump's upload (the older ones stop at the first failure) and one upload of this run's own dump, which is attempted whatever happened to the older ones. The worst case for any run is about 47 minutes of waiting: 600 seconds spent shipping older dumps, one more started just before that ran out, this run's own upload and size check, the prune's listing and delete, and the heartbeat. That leaves about 13 minutes of `TimeoutStartSec` for `pg_dump` and `age`. Neither number grows with the length of the queue. Measured in an Ubuntu 24.04 container with its packaged `rclone` 1.60.1, against a loopback B2 endpoint throttling every request with `Retry-After: 600`: `--dry-run` exited `5` after 20 seconds, and a full run stopped at 60 seconds had its encrypted dump staged. A legitimate upload slower than 900 seconds is cut off and retried the next day, which at today's dump sizes (11 MB) takes a link below 13 KB/s.
 
 **Daily, decided against the change rate rather than defaulted.** The roster moves a few rows a week: an hourly dump would be 24 copies a day of a directory that changed once, and every copy is a full copy of every member's postal address, so the cost is exposure as much as storage. Weekly loses a week of avatar uploads, stars, group admins and admin-edited markdown, none of which exists anywhere else. Daily is the setting; the residual window it leaves is the last subsection here.

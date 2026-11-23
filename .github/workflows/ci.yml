@@ -2,6 +2,8 @@
 # configuration and reachability on a host carrying neither Node nor pnpm; this
 # checks the code. Core deploys nowhere: a site's own repository pins a core
 # release and runs its deploy job (docs/skin-repository.md).
+#
+# docs/testing.md lists every job, what it catches and when it runs.
 name: CI
 
 on:
@@ -18,49 +20,140 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Actions are pinned to commit SHAs because a `@v7` tag is a pointer its
+# publisher can move. The pins are checkout 7.0.1, pnpm/action-setup 6.0.10
+# and setup-node 7.0.0. pnpm/action-setup takes no version so that it reads
+# `packageManager` from package.json, and Node comes from .nvmrc, which
+# scripts/check-node-pin.ts holds equal to package.json and the Dockerfile.
+
 jobs:
-  check:
+  # Decides which path-scoped jobs run. A push to main runs every one, so a
+  # filter that misses a path lets one PR through, never main.
+  changes:
     runs-on: ubuntu-latest
-    # Actions are pinned to commit SHAs because a `@v7` tag is a pointer its
-    # publisher can move, which is a supply-chain hop this repository does not
-    # otherwise leave open. A SHA cannot be read back as a release, so the three
-    # below are checkout 7.0.1, pnpm/action-setup 6.0.10 and setup-node 7.0.0.
+    outputs:
+      build: ${{ steps.scope.outputs.build }}
+      deploy: ${{ steps.scope.outputs.deploy }}
+      backup: ${{ steps.scope.outputs.backup }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      # Deliberately given no version: pnpm/action-setup reads `packageManager`
-      # from package.json, so the pnpm that wrote the lockfile and the pnpm that
-      # installs from it cannot disagree.
+        with:
+          fetch-depth: 0
+      - run: bash scripts/ci-scope.test.sh
+      - id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: bash scripts/ci-scope.sh >>"$GITHUB_OUTPUT"
+
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          # From .nvmrc rather than a literal. scripts/check-node-pin.ts asserts
-          # package.json, .nvmrc and the Dockerfile already agree; a version
-          # written here would be a fourth place to drift, outside that check.
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
-      - run: pnpm test
       - run: pnpm build
-      - run: bash deploy/ci-deploy.test.sh
-      - run: bash deploy/deploy.test.sh
-      - run: bash deploy/e44-review-local-pin.test.sh
-      - run: bash deploy/e44-review-r5-stamps.test.sh
-      - run: bash deploy/e44-review-r6-rollback.test.sh
-      - run: bash deploy/e44-review-r6-partial-update.test.sh
-      - run: bash deploy/e44-review-backup-unrelated.test.sh
-      - run: bash deploy/e44-review-resume-range.test.sh
-      - run: bash deploy/e44-review-dirty-core.test.sh
-      - run: bash deploy/e44-review-interrupted-parent.test.sh
-      - run: bash deploy/e44-review-index-hints.test.sh
-      - run: bash deploy/e44-review-interrupted-recovery.test.sh
-      - run: node --test scripts/e44-review-skin-config.test.mjs
-      # Its subjects, the starter files and the community runbook, leave core in
-      # the split, so an exported core has nothing for it to read.
-      - run: if [ -d skin-repository ]; then node --test scripts/e45-review-contract.test.mjs; fi
-      - run: if [ -d skin-repository ]; then node --test scripts/e45-review-recovery.test.mjs; fi
-      - run: if [ -d skin-repository ]; then node --test scripts/e45-review-runtime-config.test.mjs; fi
-      - run: if [ -d skin-repository ]; then node --test scripts/e45-review-external-dependency-path.test.mjs; fi
+
+  # The suite in three shards, each with its own Postgres, so the database
+  # tests run in CI and not only on a developer's machine.
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    services:
+      postgres:
+        image: postgres:17.4-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U test" --health-interval 2s --health-timeout 5s --health-retries 30
+    env:
+      AUDIT_TEST_DATABASE_URL: postgres://test:test@127.0.0.1:5432/test
+      # The runner's own Chrome, for the tests that run a browser from the
+      # command line rather than through playwright-core.
+      CHROME_BINARY: /usr/bin/google-chrome
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # $lib and the generated route types come from .svelte-kit, which only
+      # `svelte-kit sync` writes.
+      - run: pnpm exec svelte-kit sync
+      # Installed once before any test starts, so no two browser tests race
+      # to download it.
+      - run: node node_modules/playwright-core/cli.js install chromium
+      # The flags precede the glob: node reads anything after it as another
+      # file pattern, and would run every file in every shard. chromium.ts
+      # points a launch that names a macOS Chrome at the pinned Chromium.
+      - run: >-
+          node --import tsx --import ./src/lib/skin/register-node.ts --import ./scripts/chromium.ts
+          --experimental-test-module-mocks --test --test-timeout=120000
+          --test-shard=${{ matrix.shard }}/3 --test-skip-pattern='\[build\]'
+          'src/**/*.test.ts' 'scripts/*.test.ts' 'scripts/*.test.mts' 'scripts/*.test.mjs'
+
+  # Tests that build the whole site to prove a build carries nothing of a
+  # community's skin. Their subject is the skin, the split and the build
+  # config, which most changes leave alone.
+  build:
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: >-
+          node --import tsx --import ./src/lib/skin/register-node.ts
+          --experimental-test-module-mocks --test --test-timeout=300000 --test-name-pattern='\[build\]'
+          src/e46-org-repos.test.ts src/lib/skin/skin.test.ts scripts/e44-review-skin-config.test.mjs
+      # Their subjects, the starter files and the community runbook, leave core in
+      # the split, so an exported core has nothing for them to read.
+      - run: >-
+          if [ -d skin-repository ]; then node --test scripts/e45-review-contract.test.mjs
+          scripts/e45-review-recovery.test.mjs scripts/e45-review-runtime-config.test.mjs
+          scripts/e45-review-external-dependency-path.test.mjs; fi
+
+  deploy:
+    needs: changes
+    if: needs.changes.outputs.deploy == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - run: |
+          set -e
+          for t in deploy/ci-deploy.test.sh deploy/deploy.test.sh deploy/e44-review-*.test.sh; do
+            echo "::group::$t"
+            bash "$t"
+            echo "::endgroup::"
+          done
+
+  backup:
+    needs: changes
+    if: needs.changes.outputs.backup == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - run: sudo apt-get update -q && sudo apt-get install -y -q age rclone
       - run: sudo bash deploy/backup.test.sh
       - run: sudo bash deploy/backup-queue-progress.test.sh

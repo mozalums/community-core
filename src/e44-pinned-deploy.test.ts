@@ -79,9 +79,17 @@ test('E44 R7: deployment.md documents the pinned layout: the clone, what deploy.
 	}
 });
 
-test('E44 R7: CI runs both deploy test scripts', () => {
+test('E44 R7: CI runs every deploy test script', () => {
 	const ci = read('.github/workflows/ci.yml');
-	assert.match(ci, /^ {6}- run: bash deploy\/ci-deploy\.test\.sh$/m);
-	assert.match(ci, /^ {6}- run: bash deploy\/deploy\.test\.sh$/m);
-	assert.match(ci, /runs-on: ubuntu-latest/);
+	const loop = ci.match(/for t in (deploy\/[^;]+); do/)?.[1].split(/\s+/) ?? [];
+	assert.ok(loop.includes('deploy/ci-deploy.test.sh') && loop.includes('deploy/deploy.test.sh'), loop.join(' '));
+	const scripts = execFileSync('git', ['ls-files', 'deploy/*.test.sh'], { cwd: ROOT, encoding: 'utf8' })
+		.split('\n')
+		.filter(Boolean);
+	const glob = (p: string) => new RegExp('^' + p.replace(/[.]/g, '\\.').replace(/\*/g, '[^/]*') + '$');
+	for (const s of scripts) {
+		const inLoop = loop.some((p) => glob(p).test(s));
+		const inBackup = ci.includes(`sudo bash ${s}`);
+		assert.ok(inLoop || inBackup, `${s} runs in no CI job`);
+	}
 });

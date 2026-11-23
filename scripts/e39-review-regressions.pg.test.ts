@@ -34,7 +34,7 @@ before(() => migrate(pool));
 after(() => pool.end());
 
 test('R5: two concurrent revokes retain an administrator', async () => {
-  const group = (await pool.query(`INSERT INTO "group" (slug, name) VALUES ('e39-review-race', 'Race') RETURNING id, slug`)).rows[0];
+  const group = (await pool.query(`INSERT INTO "group" (slug, name) VALUES ('e39-review-race', 'Race') ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name RETURNING id, slug`)).rows[0];
   const subjects = ['email:a@example.com', 'email:b@example.com'];
   try {
     for (const subject of subjects) await pool.query(`INSERT INTO group_admin (group_id, ident_subject, email) VALUES ($1, $2, $3)`, [group.id, subject, subject.slice(6)]);
@@ -59,7 +59,7 @@ test('R5: two concurrent revokes retain an administrator', async () => {
 
 
 test('revoking a seeded env grant does not claim global access ended', async () => {
-  const group = (await pool.query(`INSERT INTO "group" (slug, name) VALUES ('e39-review-env', 'Env') RETURNING id, slug`)).rows[0];
+  const group = (await pool.query(`INSERT INTO "group" (slug, name) VALUES ('e39-review-env', 'Env') ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name RETURNING id, slug`)).rows[0];
   const actor = 'email:actor@example.com';
   const target = 'email:global@example.com';
   envAdmins = [target];

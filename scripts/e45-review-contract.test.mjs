@@ -21,7 +21,7 @@ const runbook = read(`skin/${community}/RUNBOOK.md`);
 const cutover = runbook.split('## Cutover to the split repositories')[1];
 const { decide } = await import(pathToFileURL(join(root, 'skin-repository/.github/guardrail/guardrail.mjs')));
 
-test('R2/R4: the documented token can read the private skin checkout', () => {
+test('[build] R2/R4: the documented token can read the private skin checkout', () => {
   for (const [name, job] of Object.entries(ci.jobs)) {
     const parent = job.steps.find((s) => s.uses?.startsWith('actions/checkout@'));
     const usesCoreToken = parent?.with?.token?.includes('secrets.CORE_READ_TOKEN');
@@ -31,12 +31,12 @@ test('R2/R4: the documented token can read the private skin checkout', () => {
   }
 });
 
-test('R2 BRANCH-REGRESSION: the enclosing workflow cannot cancel a deploy on a later main push', () => {
+test('[build] R2 BRANCH-REGRESSION: the enclosing workflow cannot cancel a deploy on a later main push', () => {
   assert.notEqual(ci.concurrency?.['cancel-in-progress'], true,
     'workflow concurrency cancels the entire main run, including the deploy job');
 });
 
-test('R3: a sole maintainer can merge their own pull request, protected path or not', () => {
+test('[build] R3: a sole maintainer can merge their own pull request, protected path or not', () => {
   const head = 'a'.repeat(40);
   for (const filename of ['copy/landing.md', 'deploy/env.example', '.github/workflows/ci.yml', 'core']) {
     const result = decide({author: 'keeper', headSha: head, files: [{filename}],
@@ -45,7 +45,7 @@ test('R3: a sole maintainer can merge their own pull request, protected path or 
   }
 });
 
-test('R5: before and after private-field probes agree for correctly migrated data', () => {
+test('[build] R5: before and after private-field probes agree for correctly migrated data', () => {
   const before = cutover.split('### 3. Database dump')[1].split('### 4.')[0];
   const after = cutover.split('### 5. Dev first')[1].split('### 6.')[0];
   // The header-to-key pairs are migration 13 in release 76356d2.
@@ -65,7 +65,7 @@ test('R5: before and after private-field probes agree for correctly migrated dat
     `legacy keys ${JSON.stringify(oldKeys)} select ${JSON.stringify(oldKeys.map((k) => data[k] ?? null))}`);
 });
 
-test('R5: production rollback leaves the dev forced command pointing at core', () => {
+test('[build] R5: production rollback leaves the dev forced command pointing at core', () => {
   const rollback = cutover.split('### 7. Rollback')[1];
   const expression = rollback.match(/sudo sed -i '([^']+)'[^`\n]*authorized_keys/)[1];
   const base = `/web/${community}.com`;
@@ -77,7 +77,7 @@ test('R5: production rollback leaves the dev forced command pointing at core', (
 });
 
 
-test('BRANCH-REGRESSION: the new E45 module loads when exported core has no starter files', () => {
+test('[build] BRANCH-REGRESSION: the new E45 module loads when exported core has no starter files', () => {
   const scratch = mkdtempSync(join(tmpdir(), 'e45-review-core-'));
   try {
     const env = {...process.env, GIT_INDEX_FILE: join(scratch, 'index'),
@@ -105,7 +105,7 @@ test('BRANCH-REGRESSION: the new E45 module loads when exported core has no star
   }
 });
 
-test('R5: the documented dev rollback restores a dump saved before dev is overwritten', () => {
+test('[build] R5: the documented dev rollback restores a dump saved before dev is overwritten', () => {
   const beforeDev = cutover.split('### 5. Dev first')[0];
   const dumps = [...beforeDev.matchAll(/\bpg_dump[^\n]*\s-f\s+(\/dump\/[^\s"']+)/g)].map((m) => m[1]);
   const rollback = cutover.split('### 7. Rollback')[1];

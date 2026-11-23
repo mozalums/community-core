@@ -16,7 +16,7 @@ function fixture() {
     dependencies: join(scratch, `${community}-dependencies`, 'node_modules'), community};
 }
 
-test('R2: default-build neutrality ignores the name of an external dependency directory', () => {
+test('[build] R2: default-build neutrality ignores the name of an external dependency directory', () => {
   const f = fixture();
   try {
     mkdirSync(f.checkout);

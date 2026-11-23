@@ -1,8 +1,6 @@
 // Mounts StarButton in Chromium and drives it through real clicks against a
 // stubbed fetch whose requests stay open until the test settles them, so the
 // optimistic state, the request and the rollback are all read from the DOM.
-// Self-contained on purpose: scripts/e51-click-coverage.test.mjs copies this
-// file beside a mutated component and expects it to run from there.
 
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';

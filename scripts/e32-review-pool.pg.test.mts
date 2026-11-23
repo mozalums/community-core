@@ -36,21 +36,27 @@ after(async () => { await closePool(); });
 test('E32 R6: independent pending removals complete with the production pool and real avatar store', async () => {
   const pool = pgPool();
   await migrate(pool);
-  group.id = (await pool.query('INSERT INTO "group" (slug,name) VALUES ($1,$2) RETURNING id', [group.slug,group.name])).rows[0].id;
+  group.id = (await pool.query(`INSERT INTO "group" (slug,name) VALUES ($1,$2)
+    ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name RETURNING id`, [group.slug,group.name])).rows[0].id;
+  await pool.query('DELETE FROM audit_event WHERE group_id = $1', [group.id]);
+  await pool.query('DELETE FROM member WHERE group_id = $1', [group.id]);
+  const emails = [0,1,2,3,4].map(n => `e32-pool-member${n}@example.org`);
+  await pool.query('DELETE FROM member_avatar WHERE email = ANY($1)', [emails]);
   const ids: string[] = [];
   for (let n=0; n<5; n++) {
-    const email = `member${n}@example.org`;
+    const email = emails[n];
     const id = (await pool.query('INSERT INTO member (group_id,email,name,ident_subject) VALUES ($1,$2,$3,$4) RETURNING id',
       [group.id,email,'Member',`email:${email}`])).rows[0].id;
     await putAvatar(email,Buffer.from('photo'),'image/png');
     await hardPurgeMember(group,id,{actorEmail:admin.email,actorSubject:admin.subject});
     ids.push(id);
   }
-  await pool.query(`CREATE FUNCTION e32_overlap_completion() RETURNS trigger LANGUAGE plpgsql AS $$
+  await pool.query(`CREATE OR REPLACE FUNCTION e32_overlap_completion() RETURNS trigger LANGUAGE plpgsql AS $$
     BEGIN
       IF NEW.action = 'member.removal-completed' THEN PERFORM pg_sleep(0.2); END IF;
       RETURN NEW;
     END $$`);
+  await pool.query('DROP TRIGGER IF EXISTS e32_overlap_completion ON audit_event');
   await pool.query(`CREATE TRIGGER e32_overlap_completion BEFORE INSERT ON audit_event
     FOR EACH ROW EXECUTE FUNCTION e32_overlap_completion()`);
   const start = Date.now();
@@ -60,10 +66,13 @@ test('E32 R6: independent pending removals complete with the production pool and
       cookies:{get:()=>undefined,delete(){}} } as never); }
     catch(e) { return e; }
   }));
-  const remaining = (await pool.query('SELECT count(*)::int AS n FROM member_avatar')).rows[0].n;
-  const completions = (await pool.query("SELECT count(*)::int AS n FROM audit_event WHERE action='member.removal-completed'")).rows[0].n;
+  // The trigger slows every audit insert in the database, so it goes before
+  // anything else can run against it.
+  await pool.query('DROP TRIGGER e32_overlap_completion ON audit_event');
+  await pool.query('DROP FUNCTION e32_overlap_completion()');
+  const remaining = (await pool.query('SELECT count(*)::int AS n FROM member_avatar WHERE email = ANY($1)', [emails])).rows[0].n;
+  const completions = (await pool.query("SELECT count(*)::int AS n FROM audit_event WHERE action='member.removal-completed' AND group_id = $1", [group.id])).rows[0].n;
   const statuses = results.map((r:any)=>r.status);
-  console.log(JSON.stringify({max:pool.options.max,elapsedMs:Date.now()-start,statuses,remaining,completions,errors}));
   assert.deepEqual(statuses,[303,303,303,303,303], 'healthy concurrent removals exhausted their own shared pool');
   assert.equal(remaining,0);
   assert.equal(completions,5);

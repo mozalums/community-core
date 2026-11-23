@@ -61,7 +61,8 @@ const { render_page } = await import(source('node_modules/@sveltejs/kit/src/runt
 const { PageNodes } = await import(source('node_modules/@sveltejs/kit/src/utils/page_nodes.js'));
 before(async () => {
   await migrate(pool);
-  const r = await pool.query('INSERT INTO "group" (slug,name) VALUES ($1,$2) RETURNING id', [group.slug,group.name]);
+  const r = await pool.query(`INSERT INTO "group" (slug,name) VALUES ($1,$2)
+    ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name RETURNING id`, [group.slug,group.name]);
   group.id = r.rows[0].id;
 });
 beforeEach(async () => {
@@ -70,7 +71,11 @@ beforeEach(async () => {
     [group.id,user.email,'Member',user.subject]);
   id = r.rows[0].id; failAvatar = false; photo = true; sessions.clear(); sessions.add('initial');
 });
-after(async () => { await pool.end(); });
+after(async () => {
+  await pool.query('DELETE FROM member WHERE group_id=$1', [group.id]);
+  await pool.query('DELETE FROM "group" WHERE id=$1', [group.id]);
+  await pool.end();
+});
 function event(who: typeof user, path = `/members/${id}/edit?/delete`) {
   const url = new URL(`https://example.org${path}`);
   return {params: {slug: group.slug, id}, locals: {user: who}, url,

@@ -854,13 +854,9 @@ function testFiles(dir = ''): string[] {
 // subject that earns it; a directory or an extension earns nothing.
 const SKIN_SUBJECT: Record<string, string> = {
 	'src/lib/skin/skin.test.ts': 'the loader and the validator',
-	'scripts/e40-review-contract.test.mjs': 'the fields the shipped default skin declares',
 	'scripts/e40-review-default-tests.test.mjs': 'which skin the application tests select',
-	'scripts/e40-review-default-runtime.test.mjs': 'which skin an application probe ends on',
 	'scripts/e41-review-published-logo.test.mjs':
 		'the email logo a community skin keeps at its published URL',
-	'scripts/e42-review-theme-runtime.test.mjs':
-		"the default skin's accent as a browser paints it on sign-in and in the chrome",
 	'scripts/e42-review-config-concurrency.test.mjs':
 		"the skin's static files staged by concurrent config loads",
 	'scripts/e44-review-skin-config.test.mjs': "where the deployment guide sets the image's SKIN_DIR",
@@ -869,9 +865,7 @@ const SKIN_SUBJECT: Record<string, string> = {
 	'scripts/e45-review-contract.test.mjs':
 		"the community skin's cutover runbook, and the split's test module run in an exported core",
 	'src/e46-org-repos.test.ts':
-		"the one-commit split, the skin tests run in its core, and the release's default skin the upgrade boots on",
-	'scripts/e53-review-cookies.test.mjs':
-		"retired-cookie expiry on the community skin's production build, as the review reproduced it, committed unchanged"
+		"the one-commit split, the skin tests run in its core, and the release's default skin the upgrade boots on"
 };
 
 test('R7: no application test selects a skin, by environment, by directory or by reading another skin as data', () => {
@@ -919,7 +913,7 @@ test('R7: no application test selects a skin, by environment, by directory or by
 	const inSrc = mocksSchema.filter((p) => p.startsWith('src/'));
 	assert.ok(inSrc.length >= 14, 'the tests on another field set were not found');
 	assert.ok(
-		mocksSchema.length - inSrc.length >= 6,
+		mocksSchema.length - inSrc.length >= 3,
 		'the probes on another field set were not found'
 	);
 	for (const p of inSrc) {
@@ -1488,7 +1482,7 @@ test('E42 R1: staging puts the skin static files beside core, and refuses one th
 	}
 });
 
-test('E42 R1: two skins shipping the same file name build two sites serving different bytes at its URL', async (t) => {
+test('E42 R1: two skins shipping the same file name build two sites serving different bytes at its URL [build]', async (t) => {
 	const builds = ['one', 'two'].map((name) => {
 		const dir = buildTree(t);
 		const skin = join(dir, 'skin', name);
@@ -1920,7 +1914,7 @@ test(
 );
 
 test(
-	'E42 R7: a default build names no file after the community and carries no reference to it',
+	'E42 R7: a default build names no file after the community and carries no reference to it [build]',
 	{ skip: noCommunity },
 	async (t) => {
 		const dir = buildTree(t);

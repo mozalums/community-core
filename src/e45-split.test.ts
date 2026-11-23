@@ -480,16 +480,21 @@ test(
 		assert.deepEqual(gate.env, {
 			KEY: '${{ secrets.DEPLOY_SSH_KEY }}',
 			HOST: '${{ secrets.DEPLOY_HOST }}',
-			KNOWN_HOSTS: '${{ secrets.DEPLOY_KNOWN_HOSTS }}'
+			KNOWN_HOSTS: '${{ secrets.DEPLOY_KNOWN_HOSTS }}',
+			DISABLED: '${{ vars.DEPLOY_DISABLED }}'
 		});
-		for (const [env, ready] of [
-			[{ KEY: '', HOST: '', KNOWN_HOSTS: '' }, 'false'],
-			[{ KEY: 'k', HOST: '', KNOWN_HOSTS: 'kh' }, 'false'],
-			[{ KEY: 'k', HOST: 'h', KNOWN_HOSTS: 'kh' }, 'true']
+		// A push to main that deploys nothing fails, unless the repository
+		// said it deploys nowhere.
+		for (const [env, status, ready] of [
+			[{ KEY: '', HOST: '', KNOWN_HOSTS: '', DISABLED: '' }, 1, 'false'],
+			[{ KEY: 'k', HOST: '', KNOWN_HOSTS: 'kh', DISABLED: '' }, 1, 'false'],
+			[{ KEY: '', HOST: '', KNOWN_HOSTS: '', DISABLED: 'true' }, 0, 'false'],
+			[{ KEY: 'k', HOST: 'h', KNOWN_HOSTS: 'kh', DISABLED: '' }, 0, 'true'],
+			[{ KEY: 'k', HOST: 'h', KNOWN_HOSTS: 'kh', DISABLED: 'true' }, 0, 'true']
 		] as const) {
 			const output = join(tmp(), 'out');
 			const r = bash(gate.run ?? '', tmp(), { ...env, GITHUB_OUTPUT: output });
-			assert.equal(r.status, 0);
+			assert.equal(r.status, status, JSON.stringify(env));
 			assert.equal(readFileSync(output, 'utf8'), `ready=${ready}\n`);
 		}
 	}

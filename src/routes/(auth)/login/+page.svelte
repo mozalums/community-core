@@ -1,76 +1,11 @@
 <script lang="ts">
 	import { brand, site } from '$skin/skin.yaml';
-	import { onMount } from 'svelte';
 	import { enhance } from '$app/forms';
-	import {
-		browserSupportsWebAuthn,
-		browserSupportsWebAuthnAutofill,
-		startAuthentication
-	} from '@simplewebauthn/browser';
+	import PasskeySignIn from '$lib/components/PasskeySignIn.svelte';
 	import type { PageData, ActionData } from './$types';
 
 	const { data, form }: { data: PageData; form: ActionData } = $props();
 	let submitting = $state(false);
-	let passkeyError = $state('');
-	let passkeyBusy = $state(false);
-	// Rendered on the server, hidden after mount where the browser has no WebAuthn.
-	let canPasskey = $state(true);
-
-	async function passkeyOptions() {
-		const res = await fetch('/auth/passkey', {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ step: 'options' })
-		});
-		if (!res.ok) throw new Error('options');
-		return res.json();
-	}
-
-	async function finishPasskey(response: unknown) {
-		const res = await fetch('/auth/passkey', {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ step: 'verify', response, callbackUrl: data.callbackUrl })
-		});
-		if (!res.ok) {
-			passkeyError =
-				res.status === 429
-					? 'Too many sign-in attempts. Wait a few minutes and try again.'
-					: 'That passkey was not accepted. Use the email link instead.';
-			return;
-		}
-		const { redirect } = await res.json();
-		window.location.assign(redirect);
-	}
-
-	async function signInWithPasskey() {
-		passkeyError = '';
-		passkeyBusy = true;
-		try {
-			const response = await startAuthentication({ optionsJSON: await passkeyOptions() });
-			await finishPasskey(response);
-		} catch {
-			passkeyError = 'No passkey was used. You can sign in with the email link instead.';
-		} finally {
-			passkeyBusy = false;
-		}
-	}
-
-	// Conditional mediation: the browser lists this site's passkeys in the email
-	// field's autofill, and picking one signs in with no button pressed. The
-	// ceremony stays pending until then, and the button above aborts it.
-	onMount(() => {
-		if (!data.passkeys) return;
-		canPasskey = browserSupportsWebAuthn();
-		void (async () => {
-			if (!(await browserSupportsWebAuthnAutofill())) return;
-			const response = await startAuthentication({
-				optionsJSON: await passkeyOptions(),
-				useBrowserAutofill: true
-			});
-			await finishPasskey(response);
-		})().catch(() => {});
-	});
 </script>
 
 <svelte:head>
@@ -149,20 +84,8 @@
 				</button>
 			</form>
 
-			{#if data.passkeys && canPasskey}
-				<div class="space-y-2" data-passkey-signin>
-					<button
-						type="button"
-						onclick={signInWithPasskey}
-						disabled={passkeyBusy}
-						class="w-full rounded-full border border-gray-300 px-6 py-2.5 text-sm font-medium transition hover:bg-white disabled:opacity-60 dark:border-neutral-600 dark:hover:bg-neutral-800"
-					>
-						Sign in with a passkey
-					</button>
-					{#if passkeyError}
-						<p class="text-sm text-rose-600 dark:text-rose-400">{passkeyError}</p>
-					{/if}
-				</div>
+			{#if data.passkeys}
+				<PasskeySignIn callbackUrl={data.callbackUrl} />
 			{/if}
 
 			<p class="text-sm text-black/60 dark:text-neutral-400">

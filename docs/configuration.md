@@ -77,7 +77,7 @@ Not derived from it: every address mail gives for the site, and the community's 
 
 ### Passkeys (`auth.passkeys`)
 
-Passkey sign-in is a skin setting, not an environment variable: `auth.passkeys` in the skin's `skin.yaml`, a boolean that defaults to `true`, so leaving the key out leaves passkeys on. It is read at build time, so changing it takes a rebuild. With `false`, `/auth/passkey` and `/members/<id>/passkeys` return 404, the login page renders no passkey control, the email field's autocomplete goes back to `email`, and the profile edit page has no Passkeys card. Stored credentials stay in `passkey_credential` and work again if the key is switched back on. The magic link works either way. The key's row is in [skins](skin.md#sign-in), and the behavior in [features](features.md#passkeys).
+Passkey sign-in is a skin setting, not an environment variable: `auth.passkeys` in the skin's `skin.yaml`, a boolean that defaults to `true`, so leaving the key out leaves passkeys on. It is read at build time, so changing it takes a rebuild. With `false`, `/auth/passkey` and `/members/<id>/passkeys` return 404, neither the login page nor the sign-in modal renders a passkey control, the email fields' autocomplete goes back to `email`, and the profile edit page has no Passkeys card. Stored credentials stay in `passkey_credential` and work again if the key is switched back on. The magic link works either way. The key's row is in [skins](skin.md#sign-in), and the behavior in [features](features.md#passkeys).
 
 ```yaml
 auth:

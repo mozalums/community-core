@@ -1,8 +1,9 @@
 <script lang="ts">
 	// On-page sign-in modal: capture an email and POST it to /auth/magic/send,
-	// which emails a single-use magic link. This is the enhanced entry point; the
-	// same flow works without JS via the /login page.
-	import { brand, site } from '$skin/skin.yaml';
+	// which emails a single-use magic link, or sign in with a passkey. This is the
+	// enhanced entry point; the same flows work through the /login page.
+	import { auth, brand, site } from '$skin/skin.yaml';
+	import PasskeySignIn from './PasskeySignIn.svelte';
 
 	let {
 		open = $bindable(false),
@@ -13,6 +14,9 @@
 	let status = $state<'idle' | 'sending' | 'sent' | 'error'>('idle');
 	let invalid = $state(false);
 	let inputEl = $state<HTMLInputElement>();
+
+	// The same switch as PASSKEYS_ENABLED, which lives in a server-only module.
+	const passkeys = auth?.passkeys !== false;
 
 	const isValidEmail = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
 
@@ -117,7 +121,7 @@
 							id="login-modal-email"
 							type="email"
 							required
-							autocomplete="email"
+							autocomplete={passkeys ? 'username webauthn' : 'email'}
 							placeholder="you@example.com"
 							bind:this={inputEl}
 							bind:value={email}
@@ -145,6 +149,11 @@
 						</p>
 					{/if}
 				</form>
+				{#if passkeys}
+					<div class="mt-3">
+						<PasskeySignIn {callbackUrl} />
+					</div>
+				{/if}
 			{/if}
 		</div>
 	</div>

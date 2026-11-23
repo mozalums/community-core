@@ -338,12 +338,18 @@ type Job = {
 };
 const ci: { jobs: Record<string, Job> } = parse(read('.github/workflows/ci.yml'));
 
-test('E46 R3: core CI runs the gate with the default skin and has no deploy job', () => {
-	assert.deepEqual(Object.keys(ci.jobs).sort(), ['check', 'upgrade']);
+test('E46 R3: core CI runs the gate with the default skin and deploys nothing', () => {
+	assert.deepEqual(Object.keys(ci.jobs).sort(), [
+		'backup', 'build', 'changes', 'check', 'deploy', 'test', 'upgrade'
+	]);
 	const runs = ci.jobs.check.steps.map((s) => s.run ?? '');
-	for (const command of ['pnpm check', 'pnpm test', 'pnpm build']) {
+	for (const command of ['pnpm check', 'pnpm build']) {
 		assert.ok(runs.includes(command), `the check job does not run ${command}`);
 	}
+	// The test job runs what `pnpm test` runs, split across its shards.
+	const suite = ci.jobs.test.steps.map((s) => s.run ?? '').join('\n');
+	assert.match(suite, /--test-shard=\$\{\{ matrix\.shard \}\}\/3/);
+	assert.match(suite, /'src\/\*\*\/\*\.test\.ts'/);
 	const text = read('.github/workflows/ci.yml');
 	assert.doesNotMatch(text, /SKIN_DIR/, 'CI selects a skin; the gate runs on the default');
 	assert.doesNotMatch(
@@ -546,7 +552,7 @@ test('E46 R3: docs/skin-repository.md says core swaps the guardrail for branch p
 // Follow-up #93: an exported core carries skin/default alone. Runs the real
 // export, then the real skin test file inside the result.
 test(
-	'E46 #93: an exported core passes its skin tests with no community skin beside the default',
+	'E46 #93: an exported core passes its skin tests with no community skin beside the default [build]',
 	{ skip: notUnsplit, timeout: 300_000 },
 	() => {
 		const gl = stubGitleaks(PINNED);

@@ -101,8 +101,12 @@ BACKUP_HEARTBEAT_URL=https://heartbeat.invalid/ping
 ENV
 }
 
+# Every deadline at 3 s, so a case that waits on a hung remote proves the
+# cutoff fires without sitting out the production deadline.
 run() {
-	env PATH="$T/bin:$PATH" PINGS="$T/pings" LOREM_SECRETS_DIR="$T/secrets" \
+	env BACKUP_PROBE_DEADLINE=3 BACKUP_LIST_DEADLINE=3 BACKUP_DELETE_DEADLINE=3 \
+		BACKUP_UPLOAD_DEADLINE=3 BACKUP_HEARTBEAT_DEADLINE=3 \
+		PATH="$T/bin:$PATH" PINGS="$T/pings" LOREM_SECRETS_DIR="$T/secrets" \
 		LOREM_BACKUP_DIR="$T/staging" LOREM_BACKUP_LOCK="$T/lock" "$@"
 }
 
@@ -146,15 +150,15 @@ done
 write_env ":webdav,url='http://127.0.0.1:$(cat "$T/port")':"
 
 start=$SECONDS
-LIMIT=90 backup --dry-run
+LIMIT=30 backup --dry-run
 rc=$? took=$((SECONDS - start))
-result "2: --dry-run gives up on a hung remote inside 45s" \
-	"$(yes_if test "$rc" = 5 -a "$took" -le 45)" "rc=$rc ${took}s"
+result "2: --dry-run gives up on a hung remote at its probe deadline" \
+	"$(yes_if test "$rc" = 5 -a "$took" -le 15)" "rc=$rc ${took}s"
 
 # The upload after the dump spends its own, longer deadline; the case only
 # needs to see that the dump got taken before that.
 start=$SECONDS
-LIMIT=60 backup --quiet
+LIMIT=30 backup --quiet
 took=$((SECONDS - start))
 shopt -s nullglob
 queued=("$T/staging"/*.dump.age)

@@ -13,7 +13,7 @@
 		"preview": "vite preview",
 		"start": "node build/index.js",
 		"check": "tsx scripts/check-node-pin.ts && tsx scripts/check-neutral.ts && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-		"test": "SKIN_DIR=skin/default node --import tsx --import ./src/lib/skin/register-node.ts --experimental-test-module-mocks --test \"src/**/*.test.ts\"",
+		"test": "SKIN_DIR=skin/default node --import tsx --import ./src/lib/skin/register-node.ts --experimental-test-module-mocks --test --test-timeout=120000 \"src/**/*.test.ts\"",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"format": "prettier --write .",
 		"lint": "prettier --check .",

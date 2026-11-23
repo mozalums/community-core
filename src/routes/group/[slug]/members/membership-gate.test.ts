@@ -1,3 +1,6 @@
+// SvelteKit re-runs only the loads a navigation invalidated, so a client that
+// asks for the directory's data alone skips the layout. The membership check
+// has to hold on that request too, or a non-member reads the roster.
 import assert from 'node:assert/strict';
 import { test, mock } from 'node:test';
 import { resolve } from 'node:path';
@@ -9,9 +12,10 @@ const GROUP = { id: 'a7c1e4f2-5b3d-4a80-9c6e-2f8b1d3e0a44', slug: 'example' };
 const ROW = {
   id: '11111111-1111-4111-8111-111111111111', group_id: GROUP.id,
   name: 'Hidden Member', city: 'Private City', email: 'hidden@example.org',
-  status: 'active', data: {}, ident_subject: null, linkedin: null
+  status: 'active', data: {}, ident_subject: null
 };
 mock.module('$lib/server/groups', { namedExports: { getGroupBySlug: async () => GROUP } });
+mock.module('$lib/server/member-removal', { namedExports: { pendingRemovalFor: async () => null } });
 mock.module('$lib/server/postgres', { namedExports: {
   query: async (sql: string) => ({ rows: /FROM member\b/.test(sql) ? [ROW] : [], rowCount: 1 }),
   withTransaction: async () => assert.fail('read-only probe')
@@ -47,9 +51,8 @@ test('control: full layout load denies a signed-in non-member', async () => {
   assert.equal(JSON.parse(body).location, '/request');
 });
 for (const suffix of ['', '?q=Hidden']) {
-  test(`E35 R2: leaf-only directory data denies a signed-in non-member ${suffix || '(list)'}`, async () => {
+  test(`leaf-only directory data denies a signed-in non-member ${suffix || '(list)'}`, async () => {
     const result = await response([false, false, false, true], suffix);
-    console.log(JSON.stringify(result));
     assert.equal(JSON.parse(result.body).type, 'redirect', result.body);
     assert.equal(JSON.parse(result.body).location, '/request');
     assert.doesNotMatch(result.body, /Hidden Member|Private City/);

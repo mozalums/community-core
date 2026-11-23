@@ -64,7 +64,7 @@ The skin's second commit is the one that adds the pin. [Releasing](releasing.md)
 
 A newer push to the same branch cancels an older run's `check` job only. The cancellation is set on that job rather than on the workflow, because a workflow-level group would cancel the older run's `deploy` job too.
 
-The `deploy` job runs after `check`, on a push to `main` only, and never cancels a deploy in flight: deploys share one group with cancellation off, so a later one waits. It deploys through `core/deploy/ci-deploy.sh` with four secrets: `DEPLOY_SSH_KEY`, `DEPLOY_HOST`, `DEPLOY_KNOWN_HOSTS` and the optional `DEPLOY_USER` (default `deploy`). With any of the first three unset it prints a notice and succeeds, so a repository not wired to a host stays green. The host's `authorized_keys` forces the key's command, which in this layout is `<checkout>/core/deploy/deploy.sh --yes`.
+The `deploy` job runs after `check`, on a push to `main` only, and never cancels a deploy in flight: deploys share one group with cancellation off, so a later one waits. It deploys through `core/deploy/ci-deploy.sh` with four secrets: `DEPLOY_SSH_KEY`, `DEPLOY_HOST`, `DEPLOY_KNOWN_HOSTS` and the optional `DEPLOY_USER` (default `deploy`). With any of the first three unset the job fails, because a green deploy that deployed nothing hides a site running behind `main`. A repository that deploys nowhere sets the repository variable `DEPLOY_DISABLED` to `true`, and the job then succeeds with a notice. The host's `authorized_keys` forces the key's command, which in this layout is `<checkout>/core/deploy/deploy.sh --yes`.
 
 ## Guardrail workflow
 

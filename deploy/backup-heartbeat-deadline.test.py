@@ -58,9 +58,10 @@ BACKUP_HEARTBEAT_URL=http://127.0.0.1:{server.server_port}/ping
                 env = dict(os.environ, PATH=f'{root}/bin:' + os.environ['PATH'],
                            LOREM_SECRETS_DIR=str(root / 'secrets'),
                            LOREM_BACKUP_DIR=str(root / 'staging'),
-                           LOREM_BACKUP_LOCK=str(root / 'lock'))
+                           LOREM_BACKUP_LOCK=str(root / 'lock'),
+                           BACKUP_HEARTBEAT_DEADLINE='3')
                 start = time.monotonic()
-                result = subprocess.run(['timeout', '-k', '5', '90', 'bash',
+                result = subprocess.run(['timeout', '-k', '5', '30', 'bash',
                                          str(root / 'deploy/backup.sh'), '--quiet'],
                                         env=env, capture_output=True, text=True)
                 elapsed = time.monotonic() - start
@@ -75,8 +76,8 @@ BACKUP_HEARTBEAT_URL=http://127.0.0.1:{server.server_port}/ping
                 self.assertEqual(queued, [])
                 self.assertIn('/ping', server.requests)
                 self.assertEqual(result.returncode, 0,
-                                 'heartbeat exceeded its documented ~75s budget; '
-                                 'the outer 90s watchdog killed a successful backup')
+                                 'the heartbeat ran past its 3 s deadline; '
+                                 'the outer 30 s watchdog killed a successful backup')
             finally:
                 server.shutdown()
                 server.server_close()

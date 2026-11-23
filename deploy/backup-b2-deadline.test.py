@@ -89,28 +89,29 @@ RCLONE_CONFIG={config}
 BACKUP_HEARTBEAT_OPTIONAL=true
 ''')
         secrets.chmod(0o600)
-        self.env = dict(os.environ, PATH=f'{self.root}/bin:' + os.environ['PATH'],
+        self.env = dict(os.environ, BACKUP_PROBE_DEADLINE='3', BACKUP_LIST_DEADLINE='3',
+                        BACKUP_UPLOAD_DEADLINE='3', BACKUP_HEARTBEAT_DEADLINE='3', PATH=f'{self.root}/bin:' + os.environ['PATH'],
                         LOREM_SECRETS_DIR=str(self.root / 'secrets'),
                         LOREM_BACKUP_DIR=str(self.root / 'staging'),
                         LOREM_BACKUP_LOCK=str(self.root / 'lock'))
 
-    def test_probe_stops_before_45s_on_b2_throttle(self):
-        result = subprocess.run(['timeout', '45', 'bash',
+    def test_probe_stops_at_its_deadline_on_b2_throttle(self):
+        result = subprocess.run(['timeout', '20', 'bash',
                                  str(self.root / 'deploy/backup.sh'), '--dry-run'],
                                 env=self.env, capture_output=True, text=True)
         self.assertIn('/file/audit-bucket/postgres', self.server.requests)
         self.assertEqual(result.returncode, 5,
-                         f'probe rc={result.returncode}; expected 5 before 45s; '
+                         f'probe rc={result.returncode}; expected 5 before 20s; '
                          f'requests={self.server.requests}')
 
     def test_full_run_takes_dump_when_b2_throttles(self):
-        result = subprocess.run(['timeout', '60', 'bash',
+        result = subprocess.run(['timeout', '30', 'bash',
                                  str(self.root / 'deploy/backup.sh'), '--quiet'],
                                 env=self.env, capture_output=True, text=True)
         self.assertIn('/file/audit-bucket/postgres', self.server.requests)
         dumps = list((self.root / 'staging').glob('*.dump.age'))
         self.assertEqual(len(dumps), 1,
-                         f'run rc={result.returncode}; encrypted dumps={len(dumps)} after 60s; '
+                         f'run rc={result.returncode}; encrypted dumps={len(dumps)} after 30s; '
                          f'requests={self.server.requests}')
         self.assertGreater(dumps[0].stat().st_size, 0)
 

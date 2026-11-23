@@ -89,8 +89,13 @@ let adaId = '';
 let bobId = '';
 const PREFIX = `/group/${GROUP.slug}`;
 
+// Both F11 review files need a group whose slug is literally `members`, so
+// they hold one advisory lock for their whole run and never share the group.
+let lock: import('pg').PoolClient | null = null;
 before(async () => {
 	if (!pool) return;
+	lock = await pool.connect();
+	await lock.query("SELECT pg_advisory_lock(hashtext('test:group:members'))");
 	await migrate(pool);
 	const { rows } = await pool.query<{ id: string }>(
 		`INSERT INTO "group" (slug, name) VALUES ($1, $2)
@@ -117,6 +122,7 @@ after(async () => {
 	if (!pool) return;
 	await pool.query('DELETE FROM member WHERE group_id = $1', [GROUP.id]);
 	await pool.query('DELETE FROM "group" WHERE id = $1', [GROUP.id]);
+	lock?.release();
 	await pool.end();
 });
 

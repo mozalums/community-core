@@ -64,7 +64,7 @@ function fixture(stack, swapped) {
 }
 
 for (const stack of ['www', 'dev']) {
-  test(`R5: ${stack} rollback recovers a migration failure before the directory swap`, () => {
+  test(`[build] R5: ${stack} rollback recovers a migration failure before the directory swap`, () => {
     const f = fixture(stack, false);
     try {
       const r = spawnSync('bash', ['-c', f.command], {cwd: f.dir, env: f.env, encoding: 'utf8'});
@@ -76,7 +76,7 @@ for (const stack of ['www', 'dev']) {
   });
 }
 
-test('R5: dev rollback leaves the restored CI deploy command able to pass its branch precondition', () => {
+test('[build] R5: dev rollback leaves the restored CI deploy command able to pass its branch precondition', () => {
   const f = fixture('dev', true);
   try {
     const restored = spawnSync('bash', ['-c', f.command], {cwd: f.dir, env: f.env, encoding: 'utf8'});
@@ -90,7 +90,7 @@ test('R5: dev rollback leaves the restored CI deploy command able to pass its br
 });
 
 for (const stack of ['www', 'dev']) {
-  test(`R5: ${stack} rollback rebuild carries the recorded SHA required by its footer check`, () => {
+  test(`[build] R5: ${stack} rollback rebuild carries the recorded SHA required by its footer check`, () => {
     const f = fixture(stack, true);
     try {
       const r = spawnSync('bash', ['-c', f.command], {cwd: f.dir, env: f.env, encoding: 'utf8'});

@@ -63,7 +63,7 @@ exit 0
   return {dir, host, secrets, env, run};
 }
 
-test('R5: production rollback retains or restores the runtime credentials its recorded checkout needs', () => {
+test('[build] R5: production rollback retains or restores the runtime credentials its recorded checkout needs', () => {
   const f = fixture();
   try {
     const beforeKeys = cutover.split('### 4. Deploy keys and secrets')[0];

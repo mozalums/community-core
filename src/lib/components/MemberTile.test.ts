@@ -93,9 +93,8 @@ test('a long name wraps to two lines instead of truncating to one', () => {
 	}
 });
 
-// The browser guard in scripts/e50-review-layout.test.mjs measures the result;
-// this holds the markup it depends on: everything before the last word sits in
-// a one-line box, and the last word follows it outside that box.
+// The markup a one-line name depends on: everything before the last word sits
+// in a one-line box, and the last word follows it outside that box.
 test('the surname is never inside the one-line given-names box', () => {
 	const html = plain(tile('Alexandria-Christine Montgomery'));
 	const given = html.match(/<span data-given-names[^>]*>([^<]*)<\/span>([^<]*)<\/p>/);

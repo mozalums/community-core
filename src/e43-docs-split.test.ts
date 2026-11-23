@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -60,7 +61,7 @@ test('E43 R1: README.md replaces readme.md and orients a stranger', () => {
 	}
 });
 
-test('E43 R1: the authors are named with the span of their work, and no license is claimed', () => {
+test('E43 R1: the authors are named with the span of their work, and the code is under Apache 2.0', () => {
 	const readme = read('README.md');
 	const authors = section(readme, 'Authors');
 	for (const name of AUTHORS) assert.ok(authors.includes(name), name);
@@ -69,9 +70,17 @@ test('E43 R1: the authors are named with the span of their work, and no license 
 
 	const license = section(readme, 'License').trim();
 	assert.equal(license.split(/(?<=\.)\s+(?=[A-Z])/).length, 1, 'the license section is more than one sentence');
-	assert.match(license, /No license has been chosen/);
-	assert.equal(JSON.parse(read('package.json')).private, true);
-	assert.ok(!tracked().some((f) => /^LICEN[SC]E/i.test(f)), 'a LICENSE file was added');
+	assert.match(license, /\[Apache License, Version 2\.0\]\(LICENSE\)/);
+	const pkg = JSON.parse(read('package.json'));
+	assert.equal(pkg.license, 'Apache-2.0');
+	assert.equal(pkg.private, true, 'without private: true, npm would publish the app');
+	// The license text unmodified, as https://www.apache.org/licenses/LICENSE-2.0.txt serves it.
+	assert.equal(
+		createHash('sha256').update(read('LICENSE')).digest('hex'),
+		'cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30',
+		'LICENSE is not the Apache License 2.0 text'
+	);
+	assert.deepEqual(tracked().filter((f) => /^(LICEN[SC]E|COPYING)/i.test(f)), ['LICENSE']);
 });
 
 test('E43 R2: one reference page per subject under docs, written for any deployment', () => {

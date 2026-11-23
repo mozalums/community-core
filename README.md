@@ -111,4 +111,4 @@ Pre-1.0. One community runs it in production. From `v0.1.0`, minor and patch rel
 
 ## License
 
-No license has been chosen yet, so none is granted: you may read this code, but not copy, modify or redistribute it.
+Licensed under the [Apache License, Version 2.0](LICENSE).

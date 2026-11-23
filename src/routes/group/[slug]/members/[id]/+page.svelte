@@ -111,7 +111,7 @@
 </script>
 
 {#snippet linkList(links: RenderedLink[])}
-	<ul class="flex flex-wrap gap-x-4 gap-y-1">
+	<ul class="flex flex-col gap-1">
 		{#each links as l (l.site)}
 			<li>
 				<a

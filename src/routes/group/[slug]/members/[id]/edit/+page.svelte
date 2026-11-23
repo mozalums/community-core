@@ -662,7 +662,12 @@
 				<p class="text-sm text-red-600 dark:text-red-400">{saveError}</p>
 			{/if}
 
-			<div class="flex items-center justify-between gap-3">
+			<!-- Sticky: the form runs well past one screen, and a save control
+			     only at its end reads as missing. It stacks below the field
+			     dropdowns (z-10) so an open list stays clickable over it. -->
+			<div
+				class="sticky bottom-0 z-[5] -mx-1 flex items-center justify-between gap-3 border-t border-gray-200 bg-gray-50/95 px-1 py-3 backdrop-blur dark:border-white/10 dark:bg-neutral-900/95"
+			>
 				<span class="text-xs italic text-gray-400 dark:text-neutral-500">*Required fields</span>
 				<div class="flex items-center gap-3">
 					<a

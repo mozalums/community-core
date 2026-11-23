@@ -504,9 +504,17 @@ export async function searchMembers(
 			const checkboxKeys = param(
 				visible.filter((k) => DEFAULT_FIELD_SCHEMA.find((f) => f.key === k)?.type === 'checkbox')
 			);
+			// A links field's handles are read straight out of its list: the
+			// generic member_value_text tests each value with a subquery, and
+			// calling it per value per member made a search take seconds.
+			const linksKeys = param(
+				visible.filter((k) => DEFAULT_FIELD_SCHEMA.find((f) => f.key === k)?.type === 'links')
+			);
 			const lexicalText = (k: string, v: string) => `CASE WHEN ${k} = ANY(${checkboxKeys}::text[])
 			    THEN member_search_values(jsonb_build_object(${k}, ${v}))
-			    ELSE member_value_text(${v}) END`;
+			    WHEN ${k} = ANY(${linksKeys}::text[])
+			    THEN translate(jsonb_path_query_array(${v}, '$[*].handle')::text, '[]",', '    ')
+			    ELSE coalesce(${v} #>> '{}', '') END`;
 			const labels = param(visibleLabels);
 			const boxKeys = param(boxes.map((f) => f.key));
 			const boxLabels = param(boxes.map((f) => f.label));
@@ -559,8 +567,7 @@ export async function searchMembers(
 				const keyText = lexicalText('l.k', 'member.data->l.k');
 				const colWhole = (c: PromotedColumn) => whole(`coalesce(${c}, '')`);
 				const colSub = (c: PromotedColumn) => substr(c);
-				const colClose = (c: PromotedColumn) =>
-					fuzzy ? `${c} % ${p}` : 'FALSE';
+				const colClose = (c: PromotedColumn) => (fuzzy ? `${c} % ${p}` : 'FALSE');
 				const keyWhole = whole(keyText);
 				const keySub = substr(keyText);
 				const keyClose = handleKey

@@ -21,6 +21,17 @@ export const APP_APEX_DOMAIN = env.PUBLIC_BASE_DOMAIN || site.domain;
 export const APP_BASE_DOMAIN = `www.${APP_APEX_DOMAIN}`;
 export const APP_BASE_URL = `https://${APP_BASE_DOMAIN}`;
 
+/**
+ * The address this deployment is reached at, for anything that names it from
+ * outside a request (mail, passkey origins). ORIGIN is that address wherever
+ * adapter-node runs; www. plus the apex is only right where the two coincide,
+ * and a dev host's www. name does not resolve. ORIGIN is private, so the
+ * server-side caller passes it in.
+ */
+export function siteUrl(origin: string | undefined): string {
+	return origin ? origin.replace(/\/+$/, '') : APP_BASE_URL;
+}
+
 // Brand vs. operating entity: COMPANY_NAME is what users see (the product
 // brand, today the bare domain). COMPANY_LEGAL_NAME is who operates the site,
 // for legal copy, and comes from the skin's `site.legal_name`. Nothing renders

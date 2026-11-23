@@ -21,6 +21,7 @@ import {
 } from '$lib/server/field-schema';
 import { createMemberIn, type Patch } from '$lib/server/member-write';
 import { profileHref } from '$lib/server/profile-url';
+import { linkHref, storedLinks, type LinkEntry } from '$lib/links';
 import type { Group } from '$lib/server/groups';
 
 export { AFFILIATIONS, OTHER_AFFILIATION_KEY };
@@ -47,9 +48,10 @@ export type MembershipRequest = {
 export function requestData(
 	email: string,
 	updates: Record<string, string>,
-	byKey: Record<string, string | boolean>
-): Record<string, string> {
-	const data: Record<string, string> = {};
+	byKey: Record<string, string | boolean>,
+	links: Record<string, LinkEntry[]> = {}
+): Record<string, string | LinkEntry[]> {
+	const data: Record<string, string | LinkEntry[]> = {};
 	// The address keys the request row itself. A skin that also keeps it as a
 	// profile field gets the copy; one that does not loses nothing.
 	const emailField = optionalFieldByRole('email');
@@ -64,6 +66,11 @@ export function requestData(
 		const v = typeof value === 'boolean' ? (value ? 'TRUE' : 'FALSE') : value.trim();
 		if (v) data[key] = v;
 	}
+	// Stored as a member's are: the checked {site, handle} list, never URLs.
+	for (const [key, entries] of Object.entries(links)) {
+		if (!editable.has(key)) throw new Error(`the request names "${key}", which is not a field`);
+		if (entries.length) data[key] = entries;
+	}
 	return data;
 }
 
@@ -74,7 +81,7 @@ export function requestData(
 export async function submitRequest(
 	group: Group,
 	who: { email: string; subject: string | null },
-	data: Record<string, string>,
+	data: Record<string, string | LinkEntry[]>,
 	name: string
 ): Promise<{ id: string; resubmitted: boolean }> {
 	return withTransaction(async (client) => {
@@ -139,10 +146,20 @@ export async function listRequests(group: Group): Promise<MembershipRequest[]> {
 		const other = OTHER_AFFILIATION_KEY ? get(OTHER_AFFILIATION_KEY) : '';
 		const assoc = [...affiliations, ...(other ? [other] : [])].join(', ');
 		const rest = specs
-			.map((s) => {
+			.flatMap((s) => {
+				if (s.links) {
+					// One row per link, named by its site, linked as the profile will.
+					const sites = s.links;
+					return storedLinks(ownValue(data, s.name)).flatMap((e) => {
+						const site = sites.find((x) => x.id === e.site);
+						if (!site) return [];
+						const href = linkHref(site, e.handle);
+						return [{ label: site.label, value: e.handle, ...(href ? { href } : {}) }];
+					});
+				}
 				const value = get(s.name);
 				const href = s.url ? profileHref(value) : null;
-				return { label: s.label, value, ...(href ? { href } : {}) };
+				return [{ label: s.label, value, ...(href ? { href } : {}) }];
 			})
 			.filter((d) => d.value);
 
@@ -172,7 +189,7 @@ export async function approveRequest(
 	actor: Actor
 ): Promise<Approved | null> {
 	return withTransaction(async (client) => {
-		const { rows } = await client.query<{ email: string; data: Record<string, string> }>(
+		const { rows } = await client.query<{ email: string; data: Record<string, unknown> }>(
 			`SELECT email::text AS email, data FROM access_request
 			  WHERE id = $1 AND group_id = $2 AND status = 'pending'
 			  FOR UPDATE`,
@@ -212,15 +229,17 @@ export async function approveRequest(
 }
 
 // access_request.data holds checkboxes in stored form ("TRUE"/"FALSE"); the
-// write path takes them as booleans.
+// write path takes them as booleans. A links field holds its list.
 function requestPatch(data: Record<string, unknown>): Patch {
-	const checkbox = new Set(
-		fieldsFor(Object.keys(data), DEFAULT_FIELD_SCHEMA)
-			.filter((f) => f.type === 'checkbox')
-			.map((f) => f.key)
-	);
+	const defs = fieldsFor(Object.keys(data), DEFAULT_FIELD_SCHEMA);
+	const typed = (t: string) => new Set(defs.filter((f) => f.type === t).map((f) => f.key));
+	const checkbox = typed('checkbox');
+	const links = typed('links');
 	return Object.fromEntries(
-		Object.entries(data).map(([k, v]) => [k, checkbox.has(k) ? isChecked(v) : String(v ?? '')])
+		Object.entries(data).map(([k, v]) => [
+			k,
+			checkbox.has(k) ? isChecked(v) : links.has(k) ? storedLinks(v) : String(v ?? '')
+		])
 	);
 }
 

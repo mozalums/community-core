@@ -664,7 +664,7 @@ test('pg: F9 R1/R3: a roster import racing a confirm keeps the destination with 
 	const out = await raceAgainstMove(async (c) => {
 		const lock = await lockGroupIn(c as never, ids.groups[1]);
 		await importInsertIn(lock, ids.groups[1], NEW, {
-			data: {}, privateData: {}, name: 'Imported', city: null, linkedin: null
+			data: {}, privateData: {}, name: 'Imported', city: null
 		});
 	});
 	assert.deepEqual(out, { result: { ok: false, reason: 'taken' }, old: { members: 1, admins: 1, stars: 2 } });

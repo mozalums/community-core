@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import SignOut from '$lib/components/SignOut.svelte';
+	import LinksField from '$lib/components/LinksField.svelte';
 	import { brand, site } from '$skin/skin.yaml';
 	import type { PageData, ActionData } from './$types';
 
@@ -8,10 +9,10 @@
 	let saving = $state(false);
 
 	// Repopulate after a failed submit; fall back to the login-name prefill.
-	const v = $derived((form as { values?: Record<string, string> } | null)?.values ?? {});
-	const checkedSet = $derived(new Set((form as { checked?: string[] } | null)?.checked ?? []));
-	const err = $derived((form as { error?: string } | null)?.error ?? '');
-	const submitted = $derived((form as { submitted?: boolean } | null)?.submitted ?? false);
+	const v = $derived(form?.values ?? {});
+	const checkedSet = $derived(new Set(form?.checked ?? []));
+	const err = $derived(form?.error ?? '');
+	const submitted = $derived(form?.submitted ?? false);
 
 	const NAME_LABELS = { name: 'Name', firstName: 'First name', lastName: 'Last name' };
 	const nameValue = $derived({
@@ -19,12 +20,11 @@
 		firstName: v.firstName ?? data.prefill.firstName,
 		lastName: v.lastName ?? data.prefill.lastName
 	});
-	const linkedin = $derived(v.linkedin ?? '');
+	const postedLinks = $derived(form?.links ?? {});
+	const fieldError = $derived(form?.fieldError);
 	const other = $derived(v.otherAffiliations ?? '');
 	// Unchecked unless the requester ticked it and the submit came back rejected.
-	const publicProfile = $derived(
-		(form as { publicProfile?: boolean } | null)?.publicProfile ?? false
-	);
+	const publicProfile = $derived(form?.publicProfile ?? false);
 
 	const rowClass = 'grid grid-cols-1 gap-1 px-6 py-4 sm:grid-cols-3 sm:items-start sm:gap-4';
 	const inputClass =
@@ -104,7 +104,7 @@
 						<!-- Associated with -->
 						<div class={rowClass}>
 							<div class="text-sm font-medium text-gray-900 dark:text-neutral-100 sm:pt-2">
-								Associated with <span class="text-gray-400 dark:text-neutral-500">*</span>
+								Associated with
 							</div>
 							<div class="space-y-3 sm:col-span-2">
 								<div class="flex flex-wrap gap-x-5 gap-y-2">
@@ -139,28 +139,30 @@
 						</div>
 					{/if}
 
-					{#if data.asks.linkedin}
-						<!-- LinkedIn URL -->
+					{#each data.linkFields as f (f.name)}
+						<!-- The skin's links field, as the profile form shows it. -->
 						<div class={rowClass}>
 							<label
-								for="f-linkedin"
+								for={`f-${f.name}`}
 								class="text-sm font-medium text-gray-900 dark:text-neutral-100 sm:pt-2"
 							>
-								LinkedIn URL <span class="text-gray-400 dark:text-neutral-500">*</span>
+								{f.label}{#if f.required}
+									<span class="text-gray-400 dark:text-neutral-500">*</span>{/if}
 							</label>
 							<div class="sm:col-span-2">
-								<input
-									id="f-linkedin"
-									name="linkedin"
-									type="url"
-									required
-									value={linkedin}
-									placeholder="https://www.linkedin.com/in/…"
-									class={inputClass}
-								/>
+								{#key form}
+									<LinksField
+										name={f.name}
+										label={f.label}
+										sites={f.sites}
+										entries={Object.hasOwn(postedLinks, f.name) ? postedLinks[f.name] : []}
+										required={f.required}
+										error={fieldError?.name === f.name ? fieldError.message : ''}
+									/>
+								{/key}
 							</div>
 						</div>
-					{/if}
+					{/each}
 
 					{#if data.asks.publicProfile}
 						<!-- Public profile — the same sentence the edit page shows, so a member

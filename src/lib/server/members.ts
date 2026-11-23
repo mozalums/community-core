@@ -26,7 +26,6 @@ export type Member = {
 	identSubject: string | null;
 	name: string | null;
 	city: string | null;
-	linkedin: string | null;
 	// Members-visible field values, keyed by field-schema key.
 	data: Record<string, unknown>;
 	status: string;
@@ -43,7 +42,6 @@ type MemberRow = {
 	ident_subject: string | null;
 	name: string | null;
 	city: string | null;
-	linkedin: string | null;
 	data: Record<string, unknown>;
 	status: string;
 	username: string | null;
@@ -57,14 +55,13 @@ function mapMember(r: MemberRow): Member {
 		identSubject: r.ident_subject,
 		name: r.name,
 		city: r.city,
-		linkedin: r.linkedin,
 		data: r.data ?? {},
 		status: r.status,
 		username: r.username ?? null
 	};
 }
 
-const SELECT_COLS = `id, group_id, email, ident_subject, name, city, linkedin, data, status, username::text AS username`;
+const SELECT_COLS = `id, group_id, email, ident_subject, name, city, data, status, username::text AS username`;
 
 // A member with the admin-only values, which only the single-profile read
 // loads. Lists and search never select private_data, so no directory payload
@@ -283,7 +280,7 @@ const RESULT_CAP = 200;
 //
 // A word's OR block is every way one word can match exactly: a websearch
 // tsquery over visible_tsv (whole words), a case-insensitive SUBSTRING (ILIKE)
-// on name/city/linkedin AND every data field VALUE (handle, projects,
+// on name/city AND every data field VALUE (handle, projects,
 // companies, country, …) so a fragment like "popcorn" finds "popcornjs". A data
 // value or a checkbox is searched only under a key membersVisibleKeys names,
 // the set the profile shows a non-admin, so a value left in `data` under a key
@@ -390,9 +387,8 @@ export async function searchMembers(
 		const keys = promotedKeys(c);
 		return keys.length > 0 && keys.every((k) => isMembersVisibleKey(k));
 	};
-	const columns = (['name', 'city', 'linkedin'] as const).filter(columnSearchable);
+	const columns = (['name', 'city'] as const).filter(columnSearchable);
 	const searchesCity = columns.includes('city');
-	const trigramColumns = columns.filter((c) => c !== 'linkedin');
 
 	// A year filters on the tenure span, which takes both of the skin's tenure
 	// fields. Without them a year is a word like any other.
@@ -510,7 +506,7 @@ export async function searchMembers(
 			);
 			const lexicalText = (k: string, v: string) => `CASE WHEN ${k} = ANY(${checkboxKeys}::text[])
 			    THEN member_search_values(jsonb_build_object(${k}, ${v}))
-			    ELSE coalesce(${v} #>> '{}', '') END`;
+			    ELSE member_value_text(${v}) END`;
 			const labels = param(visibleLabels);
 			const boxKeys = param(boxes.map((f) => f.key));
 			const boxLabels = param(boxes.map((f) => f.label));
@@ -564,7 +560,7 @@ export async function searchMembers(
 				const colWhole = (c: PromotedColumn) => whole(`coalesce(${c}, '')`);
 				const colSub = (c: PromotedColumn) => substr(c);
 				const colClose = (c: PromotedColumn) =>
-					fuzzy && c !== 'linkedin' ? `${c} % ${p}` : 'FALSE';
+					fuzzy ? `${c} % ${p}` : 'FALSE';
 				const keyWhole = whole(keyText);
 				const keySub = substr(keyText);
 				const keyClose = handleKey
@@ -680,7 +676,7 @@ export async function searchMembers(
 	};
 
 	const exact = await pass(false);
-	if (exact.members.length || !terms.length || (!trigramColumns.length && !handle)) {
+	if (exact.members.length || !terms.length || (!columns.length && !handle)) {
 		return { ...exact, fuzzy: false };
 	}
 	const close = await pass(true);

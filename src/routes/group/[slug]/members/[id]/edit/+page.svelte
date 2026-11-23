@@ -19,6 +19,7 @@
 		matchDialingCode
 	} from '$lib/data/field-options';
 	import Combobox from '$lib/components/Combobox.svelte';
+	import LinksField from '$lib/components/LinksField.svelte';
 	import type { PageData, ActionData } from './$types';
 
 	const { data, form }: { data: PageData; form: ActionData } = $props();
@@ -71,6 +72,9 @@
 		record && Object.hasOwn(record, key) ? record[key] : undefined;
 	const posted = $derived((form as { values?: Record<string, string> } | null)?.values);
 	const valueFor = (name: string, fallback: string) => own(posted, name) ?? fallback;
+	const postedLinks = $derived(
+		(form as { links?: Record<string, { site: string; handle: string }[]> } | null)?.links
+	);
 	// The boxes and the free-text "Other" as a refused save posted them, else as stored.
 	const choices = $derived(
 		(form as { choices?: PageData['affiliations'] } | null)?.choices ?? data.affiliations
@@ -240,7 +244,19 @@
      field an option list (the city list following the chosen country), else a
      text input/textarea. Existing off-list values are preserved. -->
 {#snippet fieldControl(f: Field)}
-	{#if f.options === 'countries'}
+	{#if f.links}
+		<!-- Keyed on the action result so a refused save shows the rows it posted. -->
+		{#key form}
+			<LinksField
+				name={f.name}
+				label={f.label}
+				sites={f.links.sites}
+				entries={own(postedLinks, f.name) ?? f.links.entries}
+				required={f.required}
+				error={errorFor(f.name)}
+			/>
+		{/key}
+	{:else if f.options === 'countries'}
 		<select
 			id={`f-${f.name}`}
 			name={f.name}
@@ -325,7 +341,7 @@
 			class="w-full rounded-md border-gray-300 bg-white text-sm text-black placeholder:text-gray-400 dark:border-neutral-600 dark:bg-neutral-800 dark:text-neutral-100 dark:placeholder:text-neutral-500"
 		/>
 	{/if}
-	{#if errorFor(f.name)}
+	{#if errorFor(f.name) && !f.links}
 		<p id={`f-${f.name}-error`} class="mt-1 text-sm text-red-600 dark:text-red-400">
 			{errorFor(f.name)}
 		</p>

@@ -30,11 +30,20 @@ import {
 	type FieldDef
 } from './field-schema';
 import { checkProfileUrl } from './profile-url';
+import {
+	checkLinks,
+	isLinkList,
+	linksText,
+	offeredSites,
+	storedLinks,
+	type LinkEntry
+} from '../links';
 
 export type Client = Pick<pg.ClientBase, 'query'>;
 export type Actor = Pick<AuditEntry, 'actorSubject' | 'actorEmail'>;
 export type GroupRef = { id: string; slug: string };
-export type Patch = Record<string, string | boolean>;
+// A links field takes its entries as a list; every other field one value.
+export type Patch = Record<string, string | boolean | LinkEntry[]>;
 
 // Admin rights over the group, resolved by the caller from the session. The
 // member's own authority is not taken from the caller: it is decided here,
@@ -58,13 +67,13 @@ export class MemberWriteError extends Error {
 // An import of a group must take this same statement to order against saves.
 export const GROUP_LOCK_SQL = `SELECT pg_advisory_xact_lock(hashtextextended('member-write:' || $1::text, 0))`;
 
-export const SELECT_FOR_UPDATE_SQL = `SELECT email::text AS email, ident_subject, data, private_data, name, city, linkedin
+export const SELECT_FOR_UPDATE_SQL = `SELECT email::text AS email, ident_subject, data, private_data, name, city
 	   FROM member
 	  WHERE group_id = $1 AND id = $2 AND status = 'active'
 	  FOR UPDATE`;
 
 export const UPDATE_SQL = `UPDATE member
-	    SET data = $3::jsonb, private_data = $4::jsonb, name = $5, city = $6, linkedin = $7
+	    SET data = $3::jsonb, private_data = $4::jsonb, name = $5, city = $6
 	  WHERE group_id = $1 AND id = $2`;
 
 type LockedRow = {
@@ -74,12 +83,15 @@ type LockedRow = {
 	private_data: Record<string, unknown> | null;
 	name: string | null;
 	city: string | null;
-	linkedin: string | null;
 };
 
-type Typed = 'name' | 'city' | 'linkedin';
+type Typed = 'name' | 'city';
 
+// A stored value as text: a links list in its `site:handle` form, any other
+// value as String() spells it.
 const asText = (v: unknown) => (v == null ? '' : String(v));
+// Audit text for a changed value, which may be a links list.
+const auditText = (v: unknown) => (isLinkList(v) ? linksText(v) : asText(v));
 
 // ---------------------------------------------------------------------------
 // Pure steps
@@ -95,6 +107,9 @@ export type ValidateOptions = {
 	// Fields a 'form' writer may still set although no form shows them.
 	allow?: readonly string[];
 	schema?: readonly FieldDef[];
+	// The member's stored values, which a links field's save reads to keep
+	// entries for sites the skin no longer offers.
+	current?: Record<string, unknown>;
 };
 
 // Every key is checked, never skipped. A key the schema does not know is an
@@ -111,11 +126,32 @@ export function validatePatch(patch: Patch, opts: ValidateOptions): Patch {
 		if (opts.writer === 'form' && !isFormWritable(f) && !opts.allow?.includes(key)) {
 			throw new MemberWriteError(400, `field "${key}" cannot be edited`);
 		}
-		if ((f.type === 'checkbox') !== (typeof value === 'boolean')) {
+		if (
+			(f.type === 'checkbox') !== (typeof value === 'boolean') ||
+			(f.type === 'links') !== Array.isArray(value)
+		) {
 			throw new MemberWriteError(400, `field "${key}" has the wrong type`);
 		}
 		if (f.visibility === 'private' && !opts.mayWritePrivate) {
 			throw new MemberWriteError(403, `only an admin or the member may change "${key}"`);
+		}
+		if (Array.isArray(value)) {
+			// The browser cannot express "at least one row" for every way a
+			// row is removed, so a profile form's empty answer is refused here.
+			if (f.required && opts.writer === 'form' && value.length === 0) {
+				throw new MemberWriteError(400, `${f.label}: add at least one link`, key);
+			}
+			const sites = offeredSites(f);
+			// The form shows only the sites the skin offers, so a stored entry
+			// for any other site is carried through the save as it is stored.
+			const kept = storedLinks(opts.current && ownValue(opts.current, key)).filter(
+				(e) => !sites.some((s) => s.id === e.site)
+			);
+			const omitted = kept.filter((e) => !value.some((v) => v.site === e.site));
+			const c = checkLinks([...value, ...omitted], sites, kept);
+			if (!c.ok) throw new MemberWriteError(400, c.message, key);
+			out[key] = c.entries;
+			continue;
 		}
 		if (f.type === 'url' && typeof value === 'string' && value.trim()) {
 			const c = checkProfileUrl(value);
@@ -142,6 +178,14 @@ export function computeDelta(
 	const next: Record<string, unknown> = { ...current };
 	const changed: string[] = [];
 	for (const [key, value] of Object.entries(patch)) {
+		if (Array.isArray(value)) {
+			const had = storedLinks(ownValue(next, key));
+			if (JSON.stringify(had) === JSON.stringify(value)) continue;
+			if (value.length) next[key] = value;
+			else delete next[key];
+			changed.push(key);
+			continue;
+		}
 		const was = asText(ownValue(next, key));
 		if (typeof value === 'boolean') {
 			if (isChecked(was) === value) continue;
@@ -164,7 +208,9 @@ export function encodeValues(values: Patch): Record<string, unknown> {
 	const out: Record<string, unknown> = {};
 	for (const [key, value] of Object.entries(values)) {
 		if (typeof value === 'boolean') out[key] = value ? 'TRUE' : 'FALSE';
-		else if (value.trim()) out[key] = value.trim();
+		else if (Array.isArray(value)) {
+			if (value.length) out[key] = value;
+		} else if (value.trim()) out[key] = value.trim();
 	}
 	return out;
 }
@@ -185,11 +231,10 @@ export function deriveColumns(
 	const touched = new Set(changed);
 	const sources: Record<Typed, string[]> = {
 		name: promotedKeys('name', schema),
-		city: promotedKeys('city', schema),
-		linkedin: promotedKeys('linkedin', schema)
+		city: promotedKeys('city', schema)
 	};
 	const out = {} as Record<Typed, string | null>;
-	for (const c of ['name', 'city', 'linkedin'] as const) {
+	for (const c of ['name', 'city'] as const) {
 		const keys = sources[c];
 		out[c] = keys.some((k) => touched.has(k))
 			? keys
@@ -213,7 +258,7 @@ export function auditDiff(
 ) {
 	const shared = new Set(schema.filter((f) => f.visibility === 'members').map((f) => f.key));
 	const text = (d: Record<string, unknown>) =>
-		Object.fromEntries(changed.map((k) => [k, asText(ownValue(d, k))]));
+		Object.fromEntries(changed.map((k) => [k, auditText(ownValue(d, k))]));
 	return diffFields(
 		changed.map((k) => ({ name: k, private: !shared.has(k) })),
 		text(before),
@@ -259,13 +304,14 @@ export async function updateMemberIn(client: Client, u: UpdateInput): Promise<nu
 	const row = rows[0];
 	if (!row) throw new MemberWriteError(404, 'this profile no longer exists');
 
+	const current = { ...(row.private_data ?? {}), ...(row.data ?? {}) };
 	const patch = validatePatch(u.patch, {
 		writer: u.writer,
 		allow: u.allow,
-		mayWritePrivate: u.authority.admin || isSelf(row, u.actor)
+		mayWritePrivate: u.authority.admin || isSelf(row, u.actor),
+		current
 	});
 
-	const current = { ...(row.private_data ?? {}), ...(row.data ?? {}) };
 	// Only URL keys the caller submitted take part. An omitted one keeps both
 	// stored copies, even where they disagree, because nothing this write was
 	// given says which is right; fieldsFor returns the whole schema, so the
@@ -280,7 +326,7 @@ export async function updateMemberIn(client: Client, u: UpdateInput): Promise<nu
 	// already matched: a checked value replaces a legacy spelling, and an
 	// explicit clear empties a column whose JSON source was already gone.
 	const rebuilt = deriveColumns(next, urlKeys, row);
-	for (const c of ['name', 'city', 'linkedin'] as const) {
+	for (const c of ['name', 'city'] as const) {
 		if (rebuilt[c] === (row[c] ?? null)) continue;
 		for (const k of promotedKeys(c, DEFAULT_FIELD_SCHEMA)) {
 			if (urlKeys.includes(k) && !changed.includes(k)) changed.push(k);
@@ -296,8 +342,7 @@ export async function updateMemberIn(client: Client, u: UpdateInput): Promise<nu
 		JSON.stringify(stored.data),
 		JSON.stringify(stored.privateData),
 		typed.name,
-		typed.city,
-		typed.linkedin
+		typed.city
 	]);
 	const diff = auditDiff(changed, current, next, u.recordPrivateValues);
 	await auditIn(client, {
@@ -332,12 +377,11 @@ export async function createMemberIn(client: Client, c: CreateInput): Promise<st
 	const typed = deriveColumns(next, changed);
 	const stored = splitData(next);
 	const { rows } = await client.query<{ id: string }>(
-		`INSERT INTO member (group_id, email, name, city, linkedin, data, private_data, status)
-		 VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, 'active')
+		`INSERT INTO member (group_id, email, name, city, data, private_data, status)
+		 VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, 'active')
 		 ON CONFLICT (group_id, email) DO UPDATE SET
 		   name = EXCLUDED.name,
 		   city = EXCLUDED.city,
-		   linkedin = EXCLUDED.linkedin,
 		   data = EXCLUDED.data,
 		   private_data = EXCLUDED.private_data,
 		   status = 'active'
@@ -348,7 +392,6 @@ export async function createMemberIn(client: Client, c: CreateInput): Promise<st
 			c.email,
 			typed.name,
 			typed.city,
-			typed.linkedin,
 			JSON.stringify(stored.data),
 			JSON.stringify(stored.privateData)
 		]
@@ -463,7 +506,6 @@ export type ImportedRow = {
 	privateData: Record<string, unknown>;
 	name: string | null;
 	city: string | null;
-	linkedin: string | null;
 };
 
 // No ON CONFLICT: the import's diff matched every stored address, removed ones
@@ -476,18 +518,10 @@ export async function importInsertIn(
 	row: ImportedRow
 ): Promise<string> {
 	const { rows } = await lockedFor(lock, groupId).query<{ id: string }>(
-		`INSERT INTO member (group_id, email, name, city, linkedin, data, private_data, status)
-		 VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, 'active')
+		`INSERT INTO member (group_id, email, name, city, data, private_data, status)
+		 VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, 'active')
 		 RETURNING id`,
-		[
-			groupId,
-			email,
-			row.name,
-			row.city,
-			row.linkedin,
-			JSON.stringify(row.data),
-			JSON.stringify(row.privateData)
-		]
+		[groupId, email, row.name, row.city, JSON.stringify(row.data), JSON.stringify(row.privateData)]
 	);
 	return rows[0].id;
 }
@@ -502,8 +536,8 @@ export async function importUpdateIn(
 ): Promise<void> {
 	await lockedFor(lock, groupId).query(
 		`UPDATE member
-		    SET data = $3::jsonb, private_data = $4::jsonb, name = $5, city = $6, linkedin = $7,
-		        status = coalesce($8, status)
+		    SET data = $3::jsonb, private_data = $4::jsonb, name = $5, city = $6,
+		        status = coalesce($7, status)
 		  WHERE group_id = $1 AND id = $2`,
 		[
 			groupId,
@@ -512,7 +546,6 @@ export async function importUpdateIn(
 			JSON.stringify(row.privateData),
 			row.name,
 			row.city,
-			row.linkedin,
 			status
 		]
 	);

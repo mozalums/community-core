@@ -2,8 +2,15 @@ import assert from 'node:assert/strict';
 import { after, before, beforeEach, test } from 'node:test';
 import pg from 'pg';
 import { loadExportMembers, memberCsv } from './member-export';
+import { DEFAULT_FIELD_SCHEMA } from './field-schema';
 import { applyImportPlan, previewImport, type Db } from './member-import';
-import { GROUP_LOCK_SQL, createMemberIn, updateMemberIn, type Client } from './member-write-core';
+import {
+	GROUP_LOCK_SQL,
+	MemberWriteError,
+	createMemberIn,
+	updateMemberIn,
+	type Client
+} from './member-write-core';
 import { migrate } from './migrations';
 
 // The import's SQL against a real schema: migration 14, citext matching in the
@@ -329,3 +336,92 @@ test(
 		);
 	}
 );
+
+// PostgreSQL's jsonb refuses U+0000 and an unpaired UTF-16 surrogate, so
+// either one let through would surface as a 500 at the UPDATE. Refused in
+// validation, the save never issues one and the row keeps what it held.
+test('pg: a control character or unpaired surrogate in a link is refused before updateMemberIn writes', opts, async () => {
+	const { rows } = await pool!.query<{ id: string; data: unknown }>(
+		`SELECT id, data FROM member WHERE group_id = $1 AND email = 'm0@example.com'`,
+		[group.id]
+	);
+	for (const value of [
+		[{ site: 'website', handle: 'example.org/a\u0000b' }],
+		[{ site: 'website', handle: 'https://example.org/a\u0000b' }],
+		[{ site: 'website', handle: 'example.org/a\ud800b' }],
+		[{ site: 'website', handle: 'https://example.org/a\udc00b' }]
+	]) {
+		const c = await pool!.connect();
+		const sent: string[] = [];
+		const recording = {
+			query: (text: string, values?: unknown[]) => {
+				sent.push(text);
+				return c.query(text, values);
+			}
+		} as unknown as Client;
+		try {
+			await c.query('BEGIN');
+			await assert.rejects(
+				updateMemberIn(recording, {
+					group,
+					memberId: rows[0].id,
+					patch: { links: value },
+					actor: ACTOR,
+					authority: { admin: true },
+					writer: 'form',
+					recordPrivateValues: false
+				}),
+				(e: unknown) =>
+					e instanceof MemberWriteError &&
+					e.status === 400 &&
+					e.message === 'Website: an https:// address',
+				JSON.stringify(value)
+			);
+			assert.ok(!sent.some((t) => /^UPDATE member/.test(t)), JSON.stringify(value));
+		} finally {
+			await c.query('ROLLBACK');
+			c.release();
+		}
+	}
+	const { rows: after } = await pool!.query<{ data: unknown }>(
+		`SELECT data FROM member WHERE id = $1`,
+		[rows[0].id]
+	);
+	assert.deepEqual(after[0].data, rows[0].data);
+});
+
+test('applying a saved preview refuses a links site the skin stopped offering since', opts, async () => {
+	const field = DEFAULT_FIELD_SCHEMA.find((f) => f.type === 'links')!;
+	const offered = field.sites;
+	const c = await pool!.connect();
+	try {
+		await c.query('BEGIN');
+		const {
+			rows: [group]
+		} = await c.query<{ id: string; slug: string }>(
+			`INSERT INTO "group" (slug, name) VALUES ('import-stale-plan', 'Stale plan') RETURNING id, slug`
+		);
+		field.sites = [...(offered ?? []), 'instagram'];
+		const preview = await previewImport(c, group, ACTOR, {
+			text: 'Email,Links\nada@example.org,instagram:ada\n',
+			mode: 'merge',
+			confirmPercent: 10
+		});
+		assert.ok(preview.ok && preview.planId, JSON.stringify(preview));
+		field.sites = offered;
+		const applied = await applyImportPlan(
+			c,
+			group,
+			ACTOR,
+			{ planId: preview.planId, digest: preview.digest, typed: null, confirmPercent: 10 },
+			{ recordPrivateValues: false }
+		);
+		assert.equal(applied.ok, false);
+		const { rows } = await c.query('SELECT 1 FROM member WHERE group_id = $1', [group.id]);
+		assert.equal(rows.length, 0);
+	} finally {
+		field.sites = offered;
+		await c.query('ROLLBACK');
+		c.release();
+	}
+});

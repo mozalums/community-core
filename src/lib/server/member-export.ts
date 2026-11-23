@@ -22,6 +22,7 @@
 
 import { formatCsv, parseCsv } from './csv-core';
 import { LOGIN_LABEL } from '../skin/schema';
+import { linksText, storedLinks } from '../links';
 import {
 	DEFAULT_FIELD_SCHEMA,
 	UNMAPPED_PREFIX,
@@ -192,17 +193,22 @@ export function exportColumns(
 		(f) => f.role === 'email' || f.visibility === 'members' || opts.includePrivate
 	);
 
-	const column = (f: FieldDef): ExportColumn => ({
-		heading: columnHeading(f.key, schema),
-		key: f.key,
-		read:
+	const column = (f: FieldDef): ExportColumn => {
+		const read =
 			f.visibility === 'members'
-				? (m) => ownValue(m.data, f.key)
+				? (m: ExportMember) => ownValue(m.data, f.key)
 				: // An x.* key is private by default but migration 13 placed two of
 					// them in data, so a private field reads whichever bag holds it.
-					(m) =>
-						Object.hasOwn(m.privateData, f.key) ? m.privateData[f.key] : ownValue(m.data, f.key)
-	});
+					(m: ExportMember) =>
+						Object.hasOwn(m.privateData, f.key) ? m.privateData[f.key] : ownValue(m.data, f.key);
+		return {
+			heading: columnHeading(f.key, schema),
+			key: f.key,
+			// A links list is one cell of `site:handle` pairs, which a person can
+			// edit in a spreadsheet and the import reads back.
+			read: f.type === 'links' ? (m) => linksText(storedLinks(read(m))) || undefined : read
+		};
+	};
 	const login: ExportColumn = {
 		heading: columnHeading(LOGIN_KEY, schema),
 		key: LOGIN_KEY,

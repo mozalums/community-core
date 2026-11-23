@@ -148,7 +148,14 @@ export const EVERY_ROLE_FIELDS: readonly SkinField[] = [
 	},
 	{ key: 'endYear', label: 'End year', type: 'year', visibility: 'members', role: 'tenureEnd' },
 	{ key: 'interests', label: 'Interests', type: 'list', visibility: 'members' },
-	{ key: 'website', label: 'Website', type: 'url', visibility: 'members', column: 'linkedin' },
+	{ key: 'website', label: 'Website', type: 'url', visibility: 'members' },
+	{
+		key: 'profiles',
+		label: 'Profiles',
+		type: 'links',
+		visibility: 'members',
+		sites: ['linkedin', 'github', 'mastodon', 'website']
+	},
 	{
 		key: 'publicProfile',
 		label: 'Public profile',
@@ -225,8 +232,7 @@ export const INHERITED_KEY_FIELDS: readonly SkinField[] = [
 		key: 'propertyIsEnumerable',
 		label: 'Website',
 		type: 'url',
-		visibility: 'members',
-		column: 'linkedin'
+		visibility: 'members'
 	},
 	{ key: 'toLocaleString', label: 'City', type: 'text', visibility: 'members', column: 'city' }
 ];

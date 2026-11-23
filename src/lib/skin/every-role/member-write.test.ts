@@ -49,8 +49,7 @@ beforeEach(() => {
 		data: { givenName: 'Ada', familyName: 'Byron', staff: 'TRUE', publicProfile: 'TRUE' },
 		private_data: { phone: '+44 20 7946 0000' },
 		name: 'Ada Byron',
-		city: null,
-		linkedin: null
+		city: null
 	};
 });
 
@@ -136,8 +135,8 @@ test('R6: name is the given and family name fields joined, and cannot be written
 		/unknown field "name"/
 	);
 	await update({ patch: { givenName: 'Augusta', city: 'London', website: 'https://l/ada' } });
-	const [, , , , name, city, linkedin] = log.find((s) => s.text === UPDATE_SQL)!.values;
-	assert.deepEqual([name, city, linkedin], ['Augusta Byron', 'London', 'https://l/ada']);
+	const [, , , , name, city] = log.find((s) => s.text === UPDATE_SQL)!.values;
+	assert.deepEqual([name, city], ['Augusta Byron', 'London']);
 });
 
 test('R10: a create takes the group lock and audits the new member, private values redacted', async () => {
@@ -159,7 +158,7 @@ test('R10: a create takes the group lock and audits the new member, private valu
 	assert.deepEqual(kinds(), ['lock', 'INSERT INTO member', 'audit']);
 	const insert = log[1].values;
 	assert.equal(insert[2], 'Nomi Vance');
-	assert.deepEqual(JSON.parse(insert[5] as string), {
+	assert.deepEqual(JSON.parse(insert[4] as string), {
 		givenName: 'Nomi',
 		familyName: 'Vance',
 		staff: 'TRUE',

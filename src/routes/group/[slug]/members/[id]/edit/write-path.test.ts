@@ -22,7 +22,6 @@ const MEMBER = {
 	identSubject: 'oidc:ada',
 	name: 'Ada Byron',
 	city: null,
-	linkedin: null,
 	status: 'active',
 	data: { name: 'Ada Byron', country: 'UK' },
 	privateData: { phone: '+44 20 7946 0000' }
@@ -117,7 +116,6 @@ beforeEach(() => {
 		private_data: structuredClone(MEMBER.privateData),
 		name: MEMBER.name,
 		city: null,
-		linkedin: null
 	};
 });
 
@@ -171,7 +169,8 @@ test('R9: the edit page renders from the member row, with no loadError and no sh
 			['country', 'UK'],
 			['city', ''],
 			['bio', ''],
-			['phone', '+44 20 7946 0000']
+			['phone', '+44 20 7946 0000'],
+			['links', '']
 		]
 	);
 	assert.doesNotMatch(read('src/routes/group/[slug]/members/[id]/edit/+page.svelte'), /loadError/);

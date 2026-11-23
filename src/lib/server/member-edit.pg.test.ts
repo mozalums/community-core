@@ -331,51 +331,54 @@ test('a second delete of the same member succeeds without a second audit row', o
 // leave the typed columns as they were, however much of each is stored. A
 // column with none of its fields stored (a sheet row that carried "Full Name")
 // is the only one the form fills from the typed value, and that fill joins back
-// to the same text. A typed column no field of the skin names (linkedin here)
-// is never rebuilt.
+// to the same text.
 const NEUTRAL: {
 	label: string;
 	data: Record<string, string>;
-	typed: { name: string; city: string | null; linkedin: string | null };
+	typed: { name: string; city: string | null };
 }[] = [
 	{
 		label: 'nothing stored behind any typed column',
 		data: {},
-		typed: { name: 'Augusta Ada King', city: 'London', linkedin: 'https://l.example/ada' }
+		typed: { name: 'Augusta Ada King', city: 'London' }
 	},
 	{
 		label: 'one typed column stored and another not',
 		data: { city: 'London' },
-		typed: { name: 'Ada Byron', city: 'London', linkedin: null }
+		typed: { name: 'Ada Byron', city: 'London' }
 	},
 	{
 		label: 'a typed column that disagrees with its stored fields',
 		data: { name: 'Ada Byron' },
-		typed: { name: 'Augusta Ada King', city: null, linkedin: null }
+		typed: { name: 'Augusta Ada King', city: null }
 	}
 ];
 
 for (const c of NEUTRAL) {
 	test(`R8: an unrelated edit through the real form is neutral (${c.label})`, opts, async () => {
 		const { rows } = await pool!.query<{ id: string }>(
-			`INSERT INTO member (group_id, email, name, city, linkedin, data, private_data)
-			 VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb) RETURNING id`,
+			`INSERT INTO member (group_id, email, name, city, data, private_data)
+			 VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb) RETURNING id`,
 			[
 				GROUP.id,
 				EMAIL,
 				c.typed.name,
 				c.typed.city,
-				c.typed.linkedin,
 				JSON.stringify(c.data),
 				JSON.stringify({})
 			]
 		);
 		const member = (await getMemberById(GROUP.id, rows[0].id))!;
-		const updates = Object.fromEntries(readEditFields(member).map((f) => [f.name, f.value]));
+		// A links field posts its own controls, never a text value.
+		const updates = Object.fromEntries(
+			readEditFields(member)
+				.filter((f) => !f.links)
+				.map((f) => [f.name, f.value])
+		);
 		updates.bio = 'After';
 		await saveMemberProfile(GROUP, member, { ...NO_CHANGE, updates }, ACTOR, ADMIN);
 		const saved = (await getMemberById(GROUP.id, rows[0].id))!;
-		assert.deepEqual({ name: saved.name, city: saved.city, linkedin: saved.linkedin }, c.typed);
+		assert.deepEqual({ name: saved.name, city: saved.city }, c.typed);
 		assert.equal(saved.data.bio, 'After');
 	});
 }

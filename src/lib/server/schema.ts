@@ -14,7 +14,7 @@ let ran = false;
 export async function ensureSchema(): Promise<void> {
 	if (ran) return;
 	try {
-		const applied = await migrate(pgPool());
+		const applied = await migrate(pgPool(), (line) => log.info('schema.migrate.note', { line }));
 		if (applied.length > 0) {
 			log.info('schema.migrate.applied', { versions: applied });
 		} else {

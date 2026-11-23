@@ -27,7 +27,6 @@ const { validatePatch, computeDelta, deriveColumns } =
 const MEMBER = {
 	name: 'Nomi Vance',
 	city: null,
-	linkedin: null,
 	email: 'nomi@example.org',
 	identSubject: 'email:nomi@example.org',
 	data: { startYear: 'Nomi Vance', homeland: 'Japan', settlement: 'Tokyo', joined: '2001' },

@@ -29,9 +29,9 @@ export type FakeMember = {
 	email: string;
 	name: string | null;
 	city: string | null;
-	linkedin: string | null;
-	data: Record<string, string>;
-	private_data: Record<string, string>;
+	// Any JSON a column holds: text, a checkbox marker, a links list.
+	data: Record<string, any>;
+	private_data: Record<string, any>;
 	status: string;
 };
 
@@ -149,14 +149,13 @@ export function fakeRequestDb(): FakeRequestDb {
 			return ok(r ? [{ email: r.email, data: structuredClone(r.data) }] : []);
 		}
 		if (/INSERT INTO member/.test(text)) {
-			const [group_id, email, name, city, linkedin, data, private_data] = v as string[];
+			const [group_id, email, name, city, data, private_data] = v as string[];
 			const hit = db.members.find(
 				(m) => m.group_id === group_id && lower(m.email) === lower(email)
 			);
 			const fields = {
 				name,
 				city,
-				linkedin,
 				data: JSON.parse(data),
 				private_data: JSON.parse(private_data),
 				status: 'active'

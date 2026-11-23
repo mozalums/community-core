@@ -5,17 +5,17 @@ import { EVERY_ROLE_FIELDS, fieldSchemaWith } from '$lib/server/field-schema-fak
 // A role or typed column with one private field behind it and one visible:
 // the private part must not move the answer, the visible part must still find
 // the member. A start year is private while the end year is not, and the
-// linkedin column joins a visible website with a private portfolio.
+// city column joins a visible city with a private district.
 const MIXED_FIELDS = [
 	...EVERY_ROLE_FIELDS.map((f) =>
 		f.key === 'startYear' ? { ...f, visibility: 'private' as const } : f
 	),
 	{
-		key: 'portfolio',
-		label: 'Portfolio',
-		type: 'url' as const,
+		key: 'district',
+		label: 'District',
+		type: 'text' as const,
 		visibility: 'private' as const,
-		column: 'linkedin' as const
+		column: 'city' as const
 	}
 ];
 mock.module('$lib/server/field-schema', { namedExports: fieldSchemaWith(MIXED_FIELDS) });
@@ -71,19 +71,19 @@ before(async () => {
 	);
 	GROUP.id = rows[0].id;
 	await pool.query('DELETE FROM member WHERE group_id = $1', [GROUP.id]);
-	const insert = (name: string, linkedin: string | null, data: object, priv: object = {}) =>
+	const insert = (name: string, city: string | null, data: object, priv: object = {}) =>
 		pool!.query(
-			`INSERT INTO member (group_id, email, name, linkedin, data, private_data, status)
+			`INSERT INTO member (group_id, email, name, city, data, private_data, status)
 			 VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, 'active')`,
-			[GROUP.id, `${name.replace(/\W/g, '')}@example.org`, name, linkedin, data, priv]
+			[GROUP.id, `${name.replace(/\W/g, '')}@example.org`, name, city, data, priv]
 		);
 	// The start year sits in data as a skin flipping it to private leaves it.
 	await insert('Half Tenure', null, { startYear: '2013', endYear: '2015' });
 	await insert(
 		'Two Sites',
 		'qzxpublicsite qzxprivatefolio',
-		{ website: 'qzxpublicsite' },
-		{ portfolio: 'qzxprivatefolio' }
+		{ city: 'qzxpublicsite' },
+		{ district: 'qzxprivatefolio' }
 	);
 	await insert('Qzxcolumnname Only', null, {});
 });

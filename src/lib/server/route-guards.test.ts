@@ -41,7 +41,6 @@ const MEMBER = {
 	name: 'A Member',
 	identSubject: 'email:member@example.com',
 	city: null,
-	linkedin: null,
 	data: {}
 };
 

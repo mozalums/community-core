@@ -5,9 +5,9 @@ import { EVERY_ROLE_FIELDS, fieldSchemaWith } from '$lib/server/field-schema-fak
 
 mock.module('$lib/server/field-schema', { namedExports: fieldSchemaWith(EVERY_ROLE_FIELDS) });
 
-// B30: a url-typed field (`website`, promoted to the linkedin column) through the
-// profile save, the editor, the profile page and the admin requests page. The
-// default skin has no url field, so this runs on every role's fields.
+// A url-typed field (`website`) through the profile save, the editor, the
+// profile page and the admin requests page. The default skin has no url field,
+// so this runs on every role's fields.
 
 const GROUP = { id: '00000000-0000-4000-8000-000000000001', slug: 'example', name: 'Example' };
 const ID = '00000000-0000-4000-8000-0000000000aa';
@@ -32,8 +32,7 @@ const client = {
 						data: structuredClone(member.data),
 						private_data: structuredClone(member.privateData),
 						name: member.name,
-						city: null,
-						linkedin: member.linkedin
+						city: null
 					}
 				],
 				rowCount: 1
@@ -112,7 +111,6 @@ beforeEach(() => {
 		identSubject: 'oidc:ada',
 		name: 'Ada Byron',
 		city: null,
-		linkedin: null,
 		status: 'active',
 		data: { givenName: 'Ada', familyName: 'Byron', staff: 'TRUE', publicProfile: 'TRUE' },
 		privateData: {}
@@ -184,80 +182,48 @@ test('B30 4: a javascript: URL through the save action is a 400 naming the field
 	assert.equal(log.at(-1), 'ROLLBACK');
 });
 
-test('B30 1: a bare address saves with https:// prepended, into the field and the typed column', async () => {
+test('a bare address saves with https:// prepended', async () => {
 	const res = (await save({ ...FORM, website: 'linkedin.com/in/ada' })) as { status: number };
 	assert.equal(res.status, 303);
 	const i = log.findIndex((t) => /^\s*UPDATE member/.test(t));
 	assert.ok(i > 0, 'no member UPDATE');
 	assert.equal(JSON.parse(params[i][2] as string).website, 'https://linkedin.com/in/ada');
-	assert.equal(params[i][6], 'https://linkedin.com/in/ada');
 });
 
 test('B30 1: an empty value still clears the field', async () => {
 	(member.data as Record<string, string>).website = 'https://linkedin.com/in/ada';
-	member.linkedin = 'https://linkedin.com/in/ada';
 	const res = (await save({ ...FORM, website: '' })) as { status: number };
 	assert.equal(res.status, 303);
 	const i = log.findIndex((t) => /^\s*UPDATE member/.test(t));
 	assert.ok(!('website' in JSON.parse(params[i][2] as string)));
-	assert.equal(params[i][6], null);
 });
 
-test('B30 1: an empty value clears a legacy URL held only in the typed column', async () => {
-	for (const other of [{}, { givenName: 'Augusta' }]) {
-		log = [];
-		params = [];
-		member.linkedin = 'https://example.org/ada';
-		const res = (await save({ ...FORM, ...other, website: '' })) as { status: number };
-		assert.equal(res.status, 303);
-		const i = log.findIndex((t) => /^\s*UPDATE member/.test(t));
-		assert.ok(i > 0, `no member UPDATE (${JSON.stringify(other)})`);
-		assert.ok(!('website' in JSON.parse(params[i][2] as string)));
-		assert.equal(params[i][6], null);
-	}
-});
-
-test('B30 1: a save that omits the URL field leaves both stored copies as they were', async () => {
+test('a save that omits the URL field leaves it as it was', async () => {
 	(member.data as Record<string, string>).website = EVIL;
-	member.linkedin = 'https://example.org/ada';
 	const res = (await save({ ...FORM, givenName: 'Augusta' })) as { status: number };
 	assert.equal(res.status, 303);
 	const i = log.findIndex((t) => /^\s*UPDATE member/.test(t));
 	assert.ok(i > 0, 'no member UPDATE');
 	assert.equal(JSON.parse(params[i][2] as string).website, EVIL);
-	assert.equal(params[i][6], 'https://example.org/ada');
 });
 
-test('B30 1: resaving a legacy URL that only trims to the checked value replaces both stored copies', async () => {
+test('resaving a legacy URL that only trims to the checked value replaces it', async () => {
 	const good = 'https://example.org/ada';
 	for (const other of [{}, { givenName: 'Augusta' }]) {
 		log = [];
 		params = [];
 		(member.data as Record<string, string>).website = ' ' + good;
-		member.linkedin = ' ' + good;
 		const res = (await save({ ...FORM, ...other, website: good })) as { status: number };
 		assert.equal(res.status, 303);
 		const i = log.findIndex((t) => /^\s*UPDATE member/.test(t));
 		assert.ok(i > 0, `no member UPDATE (${JSON.stringify(other)})`);
 		assert.equal(JSON.parse(params[i][2] as string).website, good);
-		assert.equal(params[i][6], good);
 	}
-});
-
-test('B30 1: a legacy typed column is repaired even when the JSON copy already matches', async () => {
-	const good = 'https://example.org/ada';
-	(member.data as Record<string, string>).website = good;
-	member.linkedin = ' ' + good;
-	await save({ ...FORM, website: good });
-	const i = log.findIndex((t) => /^\s*UPDATE member/.test(t));
-	assert.ok(i > 0, 'no member UPDATE');
-	assert.equal(params[i][6], good);
 });
 
 test('B30 1: resaving an already normalized URL writes nothing', async () => {
 	const good = 'https://example.org/ada';
 	(member.data as Record<string, string>).website = good;
-	member.linkedin = good;
 	const res = (await save({ ...FORM, website: good })) as { status: number };
 	assert.equal(res.status, 303);
 	assert.ok(!log.some((t) => /^\s*UPDATE member/.test(t)), 'a no-op save wrote the row');
@@ -330,7 +296,6 @@ async function viewProfile() {
 
 test('B30 4: a stored javascript: value renders as text and reaches no anchor', async () => {
 	(member.data as Record<string, string>).website = EVIL;
-	member.linkedin = EVIL;
 	const body = await viewProfile();
 	assert.ok(body.includes('javascript:alert(1)'), 'the value is not shown at all');
 	for (const a of anchors(body)) assert.doesNotMatch(a, /javascript:/i, a);
@@ -338,13 +303,11 @@ test('B30 4: a stored javascript: value renders as text and reaches no anchor', 
 
 test('B30 3: an http:// value written before the fix renders as text, an https one as a link', async () => {
 	(member.data as Record<string, string>).website = 'http://example.org/ada';
-	member.linkedin = 'http://example.org/ada';
 	let body = await viewProfile();
 	assert.ok(!anchors(body).some((a) => a.includes('example.org/ada')));
 	assert.ok(body.includes('http://example.org/ada'));
 
 	(member.data as Record<string, string>).website = 'https://example.org/ada';
-	member.linkedin = 'https://example.org/ada';
 	body = await viewProfile();
 	assert.ok(
 		anchors(body).some(

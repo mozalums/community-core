@@ -246,7 +246,7 @@ test('E12 R6: a ledger at 13 or 14 is refused for the later column drops alone',
 		await inOwnSchema(async (c) => {
 			await ledgerAt(c, top);
 			const r = (await writerCutoverRefusal(c, undefined)) ?? '';
-			assert.match(r, /^migration 15, 16 /, `ledger at ${top}`);
+			assert.match(r, /^migration 15, 16, 22 /, `ledger at ${top}`);
 			assert.match(r, /LOREM_WRITERS_STOPPED=/);
 			assert.match(r, /Nothing was applied/);
 		});
@@ -256,7 +256,7 @@ test('E12 R6: a ledger at 13 or 14 is refused for the later column drops alone',
 test('E12 R6: a ledger at 12 is refused for every cutover in one stop', opts, async () => {
 	await inOwnSchema(async (c) => {
 		await ledgerAt(c, 12);
-		assert.match((await writerCutoverRefusal(c, undefined)) ?? '', /^migration 13, 15, 16 /);
+		assert.match((await writerCutoverRefusal(c, undefined)) ?? '', /^migration 13, 15, 16, 22 /);
 	});
 });
 

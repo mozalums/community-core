@@ -206,8 +206,7 @@ test('R7: promoted columns derive from the fields that name them', () => {
 	assert.deepEqual(promotedColumns({ name: 'Ada Byron', city: 'London', bio: 'x' }), {
 		email: null,
 		name: 'Ada Byron',
-		city: 'London',
-		linkedin: null
+		city: 'London'
 	});
 	// Two fields naming one column are joined in schema order.
 	assert.deepEqual(
@@ -217,7 +216,7 @@ test('R7: promoted columns derive from the fields that name them', () => {
 			{ key: 'email', label: 'Email', type: 'text', visibility: 'private', column: 'email', order: 3 },
 			{ key: 'city', label: 'City', type: 'text', visibility: 'members', column: 'city', order: 4 }
 		]),
-		{ email: 'a@b.c', name: 'Ada Byron', city: 'London', linkedin: null }
+		{ email: 'a@b.c', name: 'Ada Byron', city: 'London' }
 	);
 });
 

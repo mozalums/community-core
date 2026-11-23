@@ -7,7 +7,8 @@ import {
 	saveMemberProfile,
 	formUpdate,
 	formEcho,
-	choiceEcho
+	choiceEcho,
+	linksEcho
 } from '$lib/server/member-edit';
 import { MemberWriteError } from '$lib/server/member-write';
 import { pendingRemovalFor, removeMember } from '$lib/server/member-removal';
@@ -134,6 +135,7 @@ export const actions: Actions = {
 		const u = formUpdate(form);
 		const echo = () => ({
 			values: formEcho(u),
+			links: linksEcho(u),
 			choices: choiceEcho(u),
 			...(username === undefined ? {} : { username })
 		});

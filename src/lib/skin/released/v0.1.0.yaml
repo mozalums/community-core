@@ -53,3 +53,17 @@ fields:
     label: Phone
     type: text
     visibility: private
+  # A member's profiles elsewhere, one row per site, in this menu order.
+  - key: links
+    label: Links
+    type: links
+    visibility: members
+    sites: [linkedin, github, mastodon, bluesky, website]
+    # A site core does not define, in the form core's take: the profile
+    # address with {handle} where the username goes (Wikidata P12045).
+    custom:
+      - id: codeberg
+        label: Codeberg
+        icon: icons/codeberg.svg
+        url: https://codeberg.org/{handle}
+        wikidata: P12045

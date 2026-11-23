@@ -23,7 +23,6 @@ const MEMBER = {
 	identSubject: 'oidc:ada',
 	name: 'Ada Byron',
 	city: null,
-	linkedin: null,
 	status: 'active',
 	data: { givenName: 'Ada', familyName: 'Byron', staff: 'TRUE', publicProfile: 'TRUE' },
 	privateData: { phone: '+44 20 7946 0000' }
@@ -118,8 +117,7 @@ beforeEach(() => {
 		data: structuredClone(MEMBER.data),
 		private_data: structuredClone(MEMBER.privateData),
 		name: MEMBER.name,
-		city: null,
-		linkedin: null
+		city: null
 	};
 });
 
@@ -197,7 +195,7 @@ test('R7: an upload records the photo URL as the avatar field through the member
 	assert.equal(log.at(-1), 'COMMIT');
 });
 
-test('B30 1: an avatar upload or delete leaves an omitted URL field and its typed column alone', async () => {
+test('an avatar upload or delete leaves an omitted URL field alone', async () => {
 	const png = await sharp({
 		create: { width: 4, height: 4, channels: 3, background: { r: 0, g: 0, b: 0 } }
 	})
@@ -212,7 +210,6 @@ test('B30 1: an avatar upload or delete leaves an omitted URL field and its type
 	for (const c of cases) {
 		log = [];
 		params = [];
-		lockedRow!.linkedin = 'https://example.org/ada';
 		lockedRow!.data = { ...MEMBER.data, ...(c.website ? { website: c.website } : {}) };
 		lockedRow!.private_data = { photo: 'https://dir.example.org/avatar/pub-0' };
 		if (c.method === 'POST') {
@@ -231,7 +228,6 @@ test('B30 1: an avatar upload or delete leaves an omitted URL field and its type
 		}
 		const i = log.findIndex((t) => /^\s*UPDATE member/.test(t));
 		assert.ok(i > 0, `no member UPDATE (${JSON.stringify(c)})`);
-		assert.equal(params[i][6], 'https://example.org/ada', JSON.stringify(c));
 		assert.equal(JSON.parse(params[i][2] as string).website, c.website, JSON.stringify(c));
 	}
 });

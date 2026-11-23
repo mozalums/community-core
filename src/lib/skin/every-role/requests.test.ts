@@ -6,7 +6,7 @@ mock.module('$lib/server/field-schema', { namedExports: fieldSchemaWith(EVERY_RO
 
 // The request workflow on a field set that declares every role: a two-part name, a
 // private copy of the address, affiliations, the free-text "Other", the
-// public-profile box and a field in the linkedin column. The same workflow on
+// public-profile box and a links field. The same workflow on
 // the default skin is src/lib/server/requests.test.ts; this file holds what
 // that skin has no field to show. Application modules are imported
 // dynamically because a static import would bind the field schema before the
@@ -114,7 +114,9 @@ beforeEach(() => {
 const FILLED = {
 	firstName: 'Nomi',
 	lastName: 'Vance',
-	linkedin: 'https://example.org/nomi',
+	'profiles:links': '',
+	'profiles:site': 'linkedin',
+	'profiles:handle': 'https://www.linkedin.com/in/nomi/?trk=public',
 	aff_volunteer: 'on'
 };
 
@@ -144,7 +146,7 @@ async function decide(action: 'approve' | 'deny', body: Record<string, string>):
 
 const pendingId = () => db.requests.find((r) => r.status === 'pending')!.id;
 
-test('approval splits the request by field visibility and derives the typed columns', async () => {
+test('approval splits the request by field visibility, derives the typed columns and copies the links as handles', async () => {
 	await submit({ ...FILLED, publicProfile: 'on', otherAffiliations: 'Chess club' });
 	await decide('approve', { id: pendingId() });
 	const member = db.members.find((m) => m.email === APPLICANT);
@@ -158,11 +160,10 @@ test('approval splits the request by field visibility and derives the typed colu
 			email: APPLICANT,
 			name: 'Nomi Vance',
 			city: null,
-			linkedin: 'https://example.org/nomi',
 			data: {
 				givenName: 'Nomi',
 				familyName: 'Vance',
-				website: 'https://example.org/nomi',
+				profiles: [{ site: 'linkedin', handle: 'nomi' }],
 				otherAffiliations: 'Chess club',
 				staff: 'FALSE',
 				volunteer: 'TRUE',
@@ -194,20 +195,23 @@ test('requestData writes the address under the email-role field and checkboxes a
 	);
 });
 
-test('a two-part name requires the first part, a linkedin-column field its URL, and an affiliation', async () => {
-	const error = async (body: Record<string, string>) => {
-		const res = await submit(body);
-		assert.equal(res.status, 400);
-		return res.data?.error;
-	};
-	assert.equal(await error({ ...FILLED, firstName: '' }), 'First name is required.');
-	assert.equal(await error({ ...FILLED, linkedin: '' }), 'LinkedIn URL is required.');
-	const { aff_volunteer: _unticked, ...noAffiliation } = FILLED;
-	assert.equal(await error(noAffiliation), 'Select at least one affiliation.');
+test('the request form requires nothing the skin does not mark required, and still checks a link', async () => {
+	// No field here is marked required: not the name parts, not an
+	// affiliation, not the links field.
+	const res = await submit({ ...FILLED, 'profiles:handle': 'https://example.org/nomi' });
+	assert.equal(res.status, 400);
+	assert.equal(res.data?.error, 'LinkedIn: the part after linkedin.com/in/');
 	assert.equal(db.requests.length, 0);
-	// The free-text "Other" counts as an affiliation.
-	const res = await submit({ ...noAffiliation, otherAffiliations: 'Chess club' });
-	assert.equal(res.submitted, true);
+	const {
+		firstName: _f,
+		lastName: _l,
+		aff_volunteer: _a,
+		'profiles:site': _s,
+		'profiles:handle': _h,
+		...blank
+	} = FILLED;
+	assert.equal((await submit(blank)).submitted, true, 'an optional field was required');
+	assert.equal(db.requests.length, 1);
 });
 
 test('the admin card lists the ticked affiliations first and leaves the name parts to the heading', async () => {
@@ -217,6 +221,6 @@ test('the admin card lists the ticked affiliations first and leaves the name par
 	assert.equal(rows[0].name, 'Nomi Vance');
 	assert.deepEqual(rows[0].details, [
 		{ label: 'Associated with', value: 'Volunteer, Chess club' },
-		{ label: 'Website', value: 'https://example.org/nomi', href: 'https://example.org/nomi' }
+		{ label: 'LinkedIn', value: 'nomi', href: 'https://linkedin.com/in/nomi' }
 	]);
 });

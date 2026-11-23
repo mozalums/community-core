@@ -80,14 +80,13 @@ before(async () => {
 	);
 	for (const f of fixtures) {
 		await pool.query(
-			`INSERT INTO member (id, group_id, email, name, linkedin, data, private_data, status)
-      VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, 'active')`,
+			`INSERT INTO member (id, group_id, email, name, data, private_data, status)
+      VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, 'active')`,
 			[
 				f.id,
 				group.id,
 				`${f.id}@example.org`,
 				f.name,
-				f.linkedin ?? null,
 				JSON.stringify(f.data),
 				JSON.stringify(f.linkedin ? { website: f.linkedin } : {})
 			]

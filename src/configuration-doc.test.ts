@@ -64,3 +64,57 @@ test('E43 R3: the collector sees each read form, and a row is what counts as doc
 	const page = '| `ALPHA_ONE` | text |\nBETA_TWO in prose is not a row.\n';
 	assert.deepEqual([...documented(page)], ['ALPHA_ONE']);
 });
+
+// Mail names the deployment by ORIGIN; www.<apex> is only the unset-ORIGIN
+// fallback. Checked per sentence, so a correct sentence cannot vouch for a
+// stale one beside it in the same section.
+const sentences = (text: string) =>
+	text
+		.replace(/\*\*/g, '')
+		.split(/\n+|(?<=\.)\s+/)
+		.map((s) => s.trim())
+		.filter(Boolean);
+
+const WWW_ADDRESS = /www\.<apex>|canonical\W+www/i;
+const conditional = (s: string) => /`ORIGIN`/.test(s) && /\bunset\b/i.test(s);
+
+export function mailHostProblems(section: string): string[] {
+	const all = sentences(section);
+	const problems: string[] = [];
+	if (!all.some((s) => /\b(mail|logo)\b/i.test(s) && /\b(follows?|are)\s+`ORIGIN`/.test(s)))
+		problems.push('no sentence says mail follows ORIGIN');
+	for (const s of all.filter((s) => WWW_ADDRESS.test(s) && !conditional(s)))
+		problems.push(`www address given unconditionally: ${s}`);
+	if (!all.some((s) => /https:\/\/www\.<apex>/.test(s) && conditional(s)))
+		problems.push('the unset-ORIGIN fallback to https://www.<apex> is not documented');
+	return problems;
+}
+
+const configurationPage = () => read('docs/configuration.md');
+
+test('E54 R4: the PUBLIC_BASE_DOMAIN row says mail follows ORIGIN, with www only as the unset fallback', () => {
+	const row = configurationPage().match(/^\| `PUBLIC_BASE_DOMAIN` [^\n]*$/m);
+	assert.ok(row, 'docs/configuration.md has no PUBLIC_BASE_DOMAIN row');
+	assert.deepEqual(mailHostProblems(row[0]), []);
+});
+
+test('E54 R4: the Hostname section says mail follows ORIGIN, with www only as the unset fallback', () => {
+	const section = configurationPage().match(/^## Hostname[^\n]*\n[\s\S]*?(?=^#{2,3} )/m);
+	assert.ok(section, 'docs/configuration.md has no Hostname section');
+	assert.deepEqual(mailHostProblems(section[0]), []);
+});
+
+test('E54 R4: the mail-host check rejects canonical-www guidance and a missing fallback', () => {
+	const stale = [
+		"The session cookie, the canonical `www` URL and the mail sender follow the skin's domain.",
+		'- **Canonical www URL** (`https://www.<apex>`) — used for the links and the logo in the sign-in email.'
+	];
+	for (const text of stale) assert.notDeepEqual(mailHostProblems(text), [], text);
+	const noFallback = 'Mail links and the logo follow `ORIGIN`.';
+	assert.deepEqual(mailHostProblems(noFallback), [
+		'the unset-ORIGIN fallback to https://www.<apex> is not documented'
+	]);
+	const mixed =
+		'Mail links and the logo follow `ORIGIN`, falling back to `https://www.<apex>` only when `ORIGIN` is unset. The logo is at `https://www.<apex>`.';
+	assert.equal(mailHostProblems(mixed).length, 1);
+});

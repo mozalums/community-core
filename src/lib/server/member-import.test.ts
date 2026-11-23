@@ -20,7 +20,6 @@ type Row = {
 	private_data: Record<string, unknown>;
 	name: string | null;
 	city: string | null;
-	linkedin: string | null;
 };
 type Plan = {
 	id: string;
@@ -57,7 +56,6 @@ function row(email: string, r: Partial<Row> = {}): Row {
 		private_data: {},
 		name: null,
 		city: null,
-		linkedin: null,
 		...r
 	};
 }
@@ -100,13 +98,12 @@ const client: Db = {
 			return out([]);
 		}
 		if (t.startsWith('INSERT INTO member (')) {
-			const [, email, name, city, linkedin, data, priv] = values as string[];
+			const [, email, name, city, data, priv] = values as string[];
 			if (members.some((m) => m.email.toLowerCase() === email.toLowerCase()))
 				throw new Error('duplicate key');
 			const r = row(email, {
 				name,
 				city,
-				linkedin,
 				data: JSON.parse(data),
 				private_data: JSON.parse(priv)
 			});
@@ -125,14 +122,13 @@ const client: Db = {
 			return out(hit.map((m) => ({ id: m.id, email: m.email })));
 		}
 		if (t.startsWith('UPDATE member SET data')) {
-			const [, id, data, priv, name, city, linkedin, status] = values as string[];
+			const [, id, data, priv, name, city, status] = values as string[];
 			const m = members.find((x) => x.id === id)!;
 			Object.assign(m, {
 				data: JSON.parse(data),
 				private_data: JSON.parse(priv),
 				name,
-				city,
-				linkedin
+				city
 			});
 			if (status) m.status = status;
 			return out([]);

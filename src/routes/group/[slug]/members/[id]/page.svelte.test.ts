@@ -127,7 +127,6 @@ async function profileDetails(data: Record<string, string>, city: string | null)
 		identSubject: null,
 		name: 'Ada Byron',
 		city,
-		linkedin: null,
 		status: 'active',
 		username: null,
 		data: { name: 'Ada Byron', ...data },

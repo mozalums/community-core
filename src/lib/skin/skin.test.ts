@@ -550,7 +550,8 @@ test(
 				['country', 'members'],
 				['city', 'members'],
 				['bio', 'members'],
-				['phone', 'private']
+				['phone', 'private'],
+				['links', 'members']
 			]
 		);
 		const moz = fields(COMMUNITY);
@@ -654,8 +655,8 @@ test('R6: a key spelled like a fixed form control is refused where another field
 	const both = refusal(() => parseSkin(extra(held + squatter), 'skin.yaml'));
 	assert.deepEqual(both.issues, [
 		{
-			path: 'fields[6].key',
-			found: '"publicProfile" on a field without role publicProfile (held by fields[5])',
+			path: 'fields[7].key',
+			found: '"publicProfile" on a field without role publicProfile (held by fields[6])',
 			expected: 'another key (the profile form posts the publicProfile field as "publicProfile")'
 		}
 	]);
@@ -668,7 +669,7 @@ test('R6: a key spelled like a fixed form control is refused where another field
 			'skin.yaml'
 		)
 	);
-	assert.equal(other.issues[0].path, 'fields[5].key');
+	assert.equal(other.issues[0].path, 'fields[6].key');
 	// No key can spell an affiliation box's control.
 	assert.equal(
 		refusal(() => parseSkin(defaultYaml().replace('key: phone', 'key: aff_phone'), 'skin.yaml'))
@@ -775,7 +776,6 @@ test(
 			city: ['cities', null],
 			startYear: ['years', true],
 			endYear: ['years', true],
-			linkedin: [null, true],
 			cellCode: ['dialingCodes', null],
 			sizeUnisex: ['sizes', null],
 			sizeMens: ['sizes', null],
@@ -1578,7 +1578,7 @@ test(
 		assert.deepEqual(literals, [], 'a platform file names a logo file');
 		assert.match(
 			read('src/lib/server/email.ts'),
-			/\$\{APP_BASE_URL\}\/\$\{brand\.email_logo\}" alt="\$\{esc\(site\.name\)\}"/
+			/\$\{baseUrl\(\)\}\/\$\{brand\.email_logo\}" alt="\$\{esc\(site\.name\)\}"/
 		);
 		assert.match(
 			read('src/lib/server/magic-link-template.ts'),
@@ -2016,7 +2016,7 @@ const FIELD_WORDING: Record<string, string> = {
 	projects: 'projects',
 	companies: 'past and present organizations',
 	hobbies: 'hobbies and interests',
-	linkedin: 'LinkedIn URL',
+	links: 'the links you add to your profiles on other sites',
 	publicProfile: 'whether your profile is public',
 	cellCode: 'mobile dialling code',
 	cellNumber: 'mobile dialling code and number',
@@ -2482,4 +2482,204 @@ test('F13 R7: the reference docs describe field filters, their visibility rule a
 	assert.match(skin, /\| `fields\[\]\.filter` +\| one of `exact` +\|/);
 	const section = skin.split('### Field filters')[1]?.split('\n### ')[0] ?? '';
 	assert.match(section, /refuses `filter` on a field whose `visibility` is `private`/);
+});
+
+// ---------------------------------------------------------------------------
+// A links field, and every definition the loader refuses at boot
+// rather than at a member's save
+// ---------------------------------------------------------------------------
+
+// The default skin with its links field replaced by `field`, indented as a
+// list item under `fields`.
+const withLinks = (field: string) => {
+	const yaml = defaultYaml();
+	const at = yaml.indexOf("  # A member's profiles elsewhere");
+	assert.ok(at > 0, 'the default skin has no links field');
+	return yaml.slice(0, at) + field;
+};
+
+const linksIssues = (text: string) => {
+	try {
+		parseSkin(text, 'skin.yaml');
+	} catch (e) {
+		assert.ok(e instanceof SkinError, String(e));
+		return e.issues.map((i) => [i.path, i.found]);
+	}
+	return [];
+};
+
+const CUSTOM_SITE = (over: Record<string, string>) => {
+	const c = {
+		id: 'codeberg',
+		label: 'Codeberg',
+		icon: 'icons/codeberg.svg',
+		url: 'https://codeberg.org/{handle}',
+		...over
+	};
+	return `  - key: links
+    label: Links
+    type: links
+    visibility: members
+    sites: [github]
+    custom:
+      - id: ${c.id}
+        label: ${c.label}
+        icon: ${c.icon}
+        url: ${c.url}
+`;
+};
+
+test('both shipped skins offer a links field, not required, with at least the common sites', () => {
+	for (const dir of SHIPPED) {
+		const fields = loadSkinDir(dir).skin.fields;
+		const links = fields.filter((f) => f.type === 'links');
+		assert.equal(links.length, 1, dir);
+		assert.equal(links[0].required, undefined);
+		for (const id of ['linkedin', 'github', 'mastodon', 'bluesky', 'website']) {
+			assert.ok(links[0].sites?.includes(id), `${dir} does not offer ${id}`);
+		}
+		assert.ok(!fields.some((f) => f.key === 'linkedin'), 'a linkedin field is still declared');
+	}
+});
+
+test('an unknown site id is refused', () => {
+	assert.deepEqual(
+		linksIssues(
+			withLinks(
+				'  - { key: links, label: Links, type: links, visibility: members, sites: [myspace] }\n'
+			)
+		),
+		[['fields[5].sites[0]', 'the unknown site "myspace"']]
+	);
+});
+
+test('a duplicate site id is refused, across sites and custom', () => {
+	assert.deepEqual(
+		linksIssues(
+			withLinks(
+				'  - { key: links, label: Links, type: links, visibility: members, sites: [github, github] }\n'
+			)
+		),
+		[['fields[5].sites[1]', '"github" again']]
+	);
+	const twice = CUSTOM_SITE({}).replace(
+		'      - id: codeberg',
+		'      - id: codeberg\n        label: A\n        icon: icons/codeberg.svg\n        url: https://a.org/{handle}\n      - id: codeberg'
+	);
+	assert.deepEqual(linksIssues(withLinks(twice)), [['fields[5].custom[1].id', '"codeberg" again']]);
+	assert.deepEqual(linksIssues(withLinks(CUSTOM_SITE({ id: 'github' })))[0], [
+		'fields[5].custom[0].id',
+		'"github", one of core\'s sites'
+	]);
+});
+
+test('a custom url that is not https:// or holds no {handle} is refused', () => {
+	assert.deepEqual(linksIssues(withLinks(CUSTOM_SITE({ url: 'http://codeberg.org/{handle}' }))), [
+		['fields[5].custom[0].url', '"http://codeberg.org/{handle}"']
+	]);
+	assert.deepEqual(linksIssues(withLinks(CUSTOM_SITE({ url: 'https://codeberg.org/ada' }))), [
+		['fields[5].custom[0].url', '"https://codeberg.org/ada"']
+	]);
+});
+
+test('every broken template form is refused at boot, naming the form it should take', () => {
+	const refused = (url: string) =>
+		linksIssues(withLinks(CUSTOM_SITE({ url: JSON.stringify(url) })));
+	for (const [url, expected] of [
+		['http://codeberg.org/{handle}', 'https://'],
+		['https://codeberg.org/ada', 'exactly once'],
+		['https://codeberg.org/{handle}/{handle}', 'exactly once'],
+		['https://{handle}.codeberg.org/u', 'in its path'],
+		['https://{handle}.codeberg.org/u/{handle}', 'exactly once'],
+		['https://codeberg.org:8443/{handle}', 'no port or credentials'],
+		['https://codeberg.org:443/{handle}', 'no port or credentials'],
+		['https://ada@codeberg.org/{handle}', 'no port or credentials'],
+		['https://codeberg.org/u?name={handle}', 'no query'],
+		['https://codeberg.org/u#{handle}', 'no query'],
+		['https://codeberg.org/{handle}?ref=x', 'ending its path segment'],
+		['https://codeberg.org/u/{handle}x', 'ending its path segment'],
+		['https://codeberg.org/u/x{handle}', 'holds a character no handle can'],
+		['https://codeberg.org/u-{handle}', 'holds a character no handle can'],
+		['https://Codeberg.org/{handle}', 'lowercase'],
+		['https://codeberg.org/{handle}#about', 'ending its path segment'],
+		['https://codeberg.org/archive/../u/{handle}', 'dot segment'],
+		['https://codeberg.org/u/./{handle}', 'dot segment'],
+		['https://codeberg.org/u/%2e%2e/{handle}', 'escape'],
+		['https://codeberg.org/a b/{handle}', 'space'],
+		['https://café.example/u/{handle}', 'dotted host name'],
+		['https://localhost/{handle}', 'dotted host name'],
+		['https://codeberg.org/{user}/{handle}', 'exactly once']
+	]) {
+		const issues = refused(url);
+		assert.equal(issues.length, 1, `${url}: ${JSON.stringify(issues)}`);
+		assert.deepEqual(issues[0], ['fields[5].custom[0].url', JSON.stringify(url)]);
+		const expectedText = (() => {
+			try {
+				parseSkin(withLinks(CUSTOM_SITE({ url: JSON.stringify(url) })), 'skin.yaml');
+			} catch (e) {
+				return (e as SkinError).issues[0].expected;
+			}
+		})();
+		assert.ok(expectedText?.includes(expected), `${url}: ${expectedText}`);
+	}
+	for (const url of ['https://codeberg.org/u/{handle}/', 'https://codeberg.org/~{handle}']) {
+		assert.deepEqual(refused(url), [], url);
+	}
+});
+
+test('a custom site with a handle pattern is refused, since the address alone defines it', () => {
+	const found = linksIssues(
+		withLinks(CUSTOM_SITE({}).replace('        url:', "        handle: '[a-z]+'\n        url:"))
+	);
+	assert.equal(found.length, 1);
+	assert.equal(found[0][0], 'fields[5].custom[0].handle');
+});
+
+test('a links field marked filter: exact is refused', () => {
+	assert.deepEqual(
+		linksIssues(
+			withLinks(
+				'  - { key: links, label: Links, type: links, visibility: members, sites: [github], filter: exact }\n'
+			)
+		),
+		[['fields[5].filter', '"exact" on a links field']]
+	);
+});
+
+test('sites on another type, and a links field offering nothing, are refused', () => {
+	assert.deepEqual(
+		linksIssues(
+			withLinks(
+				'  - { key: links, label: Links, type: text, visibility: members, sites: [github] }\n'
+			)
+		),
+		[['fields[5].sites', 'sites on a text field']]
+	);
+	assert.deepEqual(
+		linksIssues(withLinks('  - { key: links, label: Links, type: links, visibility: members }\n')),
+		[['fields[5].sites', 'no site']]
+	);
+});
+
+test('a custom icon with no file under static/ is refused at load', () => {
+	const dir = mkdtempSync(join(tmpdir(), 'skin-links-'));
+	try {
+		cpSync(DEFAULT, dir, { recursive: true });
+		assert.ok(loadSkinDir(dir), 'the copied default skin does not load');
+		writeFileSync(
+			join(dir, 'skin.yaml'),
+			defaultYaml().replace('icon: icons/codeberg.svg', 'icon: icons/gone.svg')
+		);
+		assert.throws(
+			() => loadSkinDir(dir),
+			(e: unknown) =>
+				e instanceof SkinError &&
+				e.issues.some(
+					(i) =>
+						i.path === 'fields[5].custom[0].icon' && i.found === 'nothing at static/icons/gone.svg'
+				)
+		);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
 });

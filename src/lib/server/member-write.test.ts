@@ -56,7 +56,7 @@ const SCHEMA: readonly FieldDef[] = (
 		{ key: 'bio', label: 'Bio', type: 'longtext', visibility: 'members', role: 'bio' },
 		{ key: 'staff', label: 'Staff', type: 'checkbox', visibility: 'members', role: 'affiliation' },
 		{ key: 'city', label: 'City', type: 'text', visibility: 'members', column: 'city' },
-		{ key: 'website', label: 'Website', type: 'url', visibility: 'members', column: 'linkedin' },
+		{ key: 'website', label: 'Website', type: 'url', visibility: 'members' },
 		{ key: 'photo', label: 'Photo', type: 'url', visibility: 'private', role: 'avatar' },
 		{
 			key: 'legacyAccess',
@@ -99,8 +99,7 @@ beforeEach(() => {
 		data: { name: 'Ada Byron', country: 'UK' },
 		private_data: { phone: '+44 20 7946 0000' },
 		name: 'Ada Byron',
-		city: null,
-		linkedin: null
+		city: null
 	};
 });
 
@@ -338,11 +337,11 @@ test('R5: the caller cannot claim to be the member; that is read from the locked
 });
 
 // ---------------------------------------------------------------------------
-// 6: name is derived; city and linkedin are promoted
+// 6: name is derived; city is promoted
 // ---------------------------------------------------------------------------
 
 test('R6: a write that touches no name part keeps the stored name', () => {
-	const prev = { name: 'Full Name Row', city: 'Paris', linkedin: null };
+	const prev = { name: 'Full Name Row', city: 'Paris' };
 	assert.deepEqual(deriveColumns({ bio: 'b' }, ['bio'], prev), prev);
 	assert.deepEqual(deriveColumns({ bio: 'b' }, ['bio'], prev, SCHEMA), prev);
 	// The default skin's one name field, then a skin's two parts.
@@ -383,9 +382,9 @@ test('R10: a create takes the group lock and audits the new member, private valu
 	assert.equal(id, MEMBER_ID);
 	assert.deepEqual(kinds(), ['lock', 'INSERT INTO member', 'audit']);
 	const insert = log[1].values;
-	assert.deepEqual(insert.slice(1, 5), ['nomi@example.org', 'Nomi Vance', 'Lisbon', null]);
-	assert.deepEqual(JSON.parse(insert[5] as string), { name: 'Nomi Vance', city: 'Lisbon' });
-	assert.deepEqual(JSON.parse(insert[6] as string), { phone: '555 0100' });
+	assert.deepEqual(insert.slice(1, 4), ['nomi@example.org', 'Nomi Vance', 'Lisbon']);
+	assert.deepEqual(JSON.parse(insert[4] as string), { name: 'Nomi Vance', city: 'Lisbon' });
+	assert.deepEqual(JSON.parse(insert[5] as string), { phone: '555 0100' });
 	const a = auditRow();
 	assert.equal(a.category, 'membership');
 	assert.equal(a.action, 'member.created');
@@ -441,4 +440,32 @@ test('R12: docs/features.md says profile saves go to Postgres alone, and no long
 	const requests = readme.split(/^## Membership requests$/m)[1]?.split(/^## /m)[0] ?? '';
 	assert.doesNotMatch(requests, /the way\s+a sync maps a sheet row/);
 	assert.match(requests, /member\.created/);
+});
+
+test('a plain array value, not a links list, fills its edit control as text and can be cleared', async (t) => {
+	t.mock.module('$lib/server/postgres', {
+		namedExports: {
+			query: async () => assert.fail('read the database'),
+			withTransaction: async () => assert.fail('opened a transaction')
+		}
+	});
+	const { readEditFields } = await import('./member-edit');
+	const [bio] = readEditFields({
+		data: { bio: ['Chess', 'Climbing'] },
+		privateData: {},
+		name: 'Ada',
+		city: null
+	} as never).filter((f) => f.name === 'bio');
+	assert.equal(bio.value, 'Chess,Climbing');
+	assert.deepEqual(computeDelta({ bio: ['Chess', 'Climbing'] }, { bio: '' }), {
+		next: {},
+		changed: ['bio']
+	});
+});
+
+test('saving an unchanged ordinary field leaves a structured stored value as it is', () => {
+	const stored = [{ site: 'github', handle: 'ada' }];
+	const { next, changed } = computeDelta({ bio: stored }, { bio: String(stored) });
+	assert.deepEqual(changed, []);
+	assert.equal(next.bio, stored);
 });

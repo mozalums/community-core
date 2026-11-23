@@ -102,6 +102,20 @@ export function loadSkinDir(dir: string): LoadedSkin {
 			expected: "a file in the skin's static directory"
 		}));
 	if (unbranded.length) throw new SkinError(file, unbranded);
+	const unpictured: SkinIssue[] = skin.fields.flatMap((f, i) =>
+		(f.custom ?? []).flatMap((c, j) =>
+			absent(c.icon)
+				? [
+						{
+							path: `fields[${i}].custom[${j}].icon`,
+							found: `nothing at static/${c.icon}`,
+							expected: "a file in the skin's static directory"
+						}
+					]
+				: []
+		)
+	);
+	if (unpictured.length) throw new SkinError(file, unpictured);
 	const unlinked: SkinIssue[] = HEAD_ASSETS.filter(absent).map((asset) => ({
 		path: `static/${asset}`,
 		found: 'nothing',

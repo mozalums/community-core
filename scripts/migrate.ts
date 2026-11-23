@@ -5,7 +5,7 @@ import { scriptPool } from './db';
 
 const pool = scriptPool();
 
-migrateGated(pool, process.env.LOREM_WRITERS_STOPPED)
+migrateGated(pool, process.env.LOREM_WRITERS_STOPPED, (line) => console.log(line))
 	.then(async (applied) => {
 		if (applied.length > 0) {
 			console.log(`migrated: applied ${applied.join(', ')}`);

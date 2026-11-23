@@ -577,3 +577,16 @@ test('R7: a value of another type is a change and moves the digest; whitespace a
 	assert.equal(plan(typedCell, bio('true'), 'merge').diff.changed.length, 1);
 	assert.equal(plan(typedCell, bio(true), 'merge').diff.unchanged, 1);
 });
+
+test('a plan digest changes when the field definitions change, so a saved plan drifts', () => {
+	const diff = diffImport(parseImport('Email\nada@example.org\n', { mode: 'merge' }), [], 'merge');
+	const links = DEFAULT_FIELD_SCHEMA.find((f) => f.type === 'links')!;
+	const renamed = DEFAULT_FIELD_SCHEMA.map((f) => (f === links ? { ...f, key: 'otherLinks' } : f));
+	const retyped = DEFAULT_FIELD_SCHEMA.map((f) => (f === links ? { ...f, type: 'longtext' } : f));
+	const fewer = DEFAULT_FIELD_SCHEMA.map((f) => (f === links ? { ...f, sites: ['github'] } : f));
+	const base = diffDigest(diff, DEFAULT_FIELD_SCHEMA);
+	assert.equal(diffDigest(diff), base);
+	for (const schema of [renamed, retyped, fewer]) {
+		assert.notEqual(diffDigest(diff, schema as FieldDef[]), base);
+	}
+});

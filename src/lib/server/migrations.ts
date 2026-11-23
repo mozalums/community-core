@@ -5,11 +5,112 @@
 // lock so concurrent app boots / script runs can't race.
 
 import type pg from 'pg';
+import { currentSkin } from '../skin/load';
+import type { SkinField } from '../skin/schema';
+import { coreSite, reduceLink, storedLinks } from '../links';
 
 // Arbitrary but fixed 64-bit key for pg_advisory_lock. Don't change it.
 const ADVISORY_LOCK_KEY = 4_607_001;
 
-export type Migration = { version: number; name: string; sql: string };
+// `run` is a step SQL cannot state without a second copy of a rule core keeps
+// in TypeScript. It runs first, on the migration's own transaction, and
+// returns a line for the operator.
+export type Migration = {
+	version: number;
+	name: string;
+	sql: string;
+	run?: (client: pg.ClientBase) => Promise<string>;
+};
+
+// Where migration 22 keeps a LinkedIn value that is neither a LinkedIn profile
+// nor a usable website address: a private key no field declares, so admins see
+// it in the private export and search never reads it. report-bad-profile-urls
+// lists each one for an admin to fix by hand.
+export const UNCONVERTED_LINKEDIN_KEY = 'x.linkedin';
+
+type Bag = Record<string, unknown>;
+
+export type LinkedinOutcome = 'linkedin' | 'website' | 'kept' | 'none';
+
+// One row's LinkedIn value moved into the skin's links field. The column is
+// the source of truth; `data.linkedin` is the copy a save wrote beside it and
+// is read only when the column is empty. A value that is not a LinkedIn profile
+// but is an https address becomes the member's website link; anything else is
+// kept privately rather than dropped.
+export function convertLinkedinValue(
+	column: string | null,
+	bags: { data: Bag; privateData: Bag },
+	fields: readonly SkinField[]
+): LinkedinOutcome {
+	const copy = bags.data.linkedin;
+	delete bags.data.linkedin;
+	delete bags.privateData.linkedin;
+	const raw = (column ?? '').trim() || (typeof copy === 'string' ? copy.trim() : '');
+	if (!raw) return 'none';
+
+	const field = fields.find((f) => f.type === 'links' && f.sites?.includes('linkedin'));
+	const bag = field?.visibility === 'members' ? bags.data : bags.privateData;
+	const entries = field ? storedLinks(bag[field.key]) : [];
+	// True only when the value ends up stored: a different entry the member
+	// already holds for that site wins, and the value is kept for the report.
+	const add = (site: 'linkedin' | 'website'): boolean => {
+		if (!field || !(field.sites ?? []).includes(site)) return false;
+		const c = reduceLink(coreSite(site)!, raw);
+		if (!c.ok) return false;
+		const held = entries.find((e) => e.site === site);
+		if (held) return held.handle === c.handle;
+		entries.push({ site, handle: c.handle });
+		bag[field.key] = entries;
+		return true;
+	};
+	const isProfile = reduceLink(coreSite('linkedin')!, raw).ok;
+	if (isProfile && add('linkedin')) return 'linkedin';
+	// The website form assumes https:// for a bare host; a legacy value only
+	// moves there when it already is an https address and not a LinkedIn
+	// profile that lost to the member's own link.
+	if (!isProfile && /^https:\/\//i.test(raw) && add('website')) return 'website';
+	bags.privateData[UNCONVERTED_LINKEDIN_KEY] = raw;
+	return 'kept';
+}
+
+export async function convertLinkedin(
+	client: pg.ClientBase,
+	fields: readonly SkinField[] = currentSkin().skin.fields
+): Promise<string> {
+	const tally: Record<LinkedinOutcome, number> = { linkedin: 0, website: 0, kept: 0, none: 0 };
+	const members = await client.query<{
+		id: string;
+		linkedin: string | null;
+		data: Bag | null;
+		private_data: Bag | null;
+	}>(
+		`SELECT id, linkedin, data, private_data FROM member
+		  WHERE coalesce(btrim(linkedin), '') <> '' OR data ? 'linkedin' OR private_data ? 'linkedin'`
+	);
+	for (const m of members.rows) {
+		const bags = { data: m.data ?? {}, privateData: m.private_data ?? {} };
+		tally[convertLinkedinValue(m.linkedin, bags, fields)]++;
+		await client.query(
+			`UPDATE member SET data = $2::jsonb, private_data = $3::jsonb WHERE id = $1`,
+			[m.id, JSON.stringify(bags.data), JSON.stringify(bags.privateData)]
+		);
+	}
+	// A request keeps one bag, private values included; approval splits it.
+	const requests = await client.query<{ id: string; data: Bag }>(
+		`SELECT id, data FROM access_request WHERE data ? 'linkedin'`
+	);
+	for (const r of requests.rows) {
+		tally[convertLinkedinValue(null, { data: r.data, privateData: r.data }, fields)]++;
+		await client.query(`UPDATE access_request SET data = $2::jsonb WHERE id = $1`, [
+			r.id,
+			JSON.stringify(r.data)
+		]);
+	}
+	return (
+		`migration 22: ${tally.linkedin} LinkedIn value(s) converted, ${tally.website} moved to the website link, ` +
+		`${tally.kept} kept under ${UNCONVERTED_LINKEDIN_KEY} (pnpm report-bad-profile-urls lists them)`
+	);
+}
 
 // Append-only. Never edit or renumber an applied migration — add a new one.
 export const MIGRATIONS: Migration[] = [
@@ -910,6 +1011,57 @@ export const MIGRATIONS: Migration[] = [
 				AFTER INSERT ON member
 				FOR EACH ROW EXECUTE FUNCTION member_joins_revert_grants();
 		`
+	},
+	{
+		// A member's links to other sites are a list of {site, handle} in the
+		// profile data (src/lib/links.ts). The one link the member row carried
+		// as a column, LinkedIn, moves into that list first (`run`), then the
+		// column goes. Search reads a links list as its handles alone, so a
+		// word like "site" matches nobody. The generated column cannot see the
+		// skin, so a links list is recognized by its form: a non-empty array of
+		// objects holding exactly a string `site` and `handle`. Any other value,
+		// arrays included, is searched as its JSON text, as before.
+		version: 22,
+		name: 'profile_links',
+		run: (client) => convertLinkedin(client),
+		sql: /* sql */ `
+			ALTER TABLE member DROP COLUMN IF EXISTS search_tsv;
+			ALTER TABLE member DROP COLUMN IF EXISTS linkedin;
+			CREATE OR REPLACE FUNCTION member_is_links(v jsonb) RETURNS boolean
+				LANGUAGE sql IMMUTABLE AS $$
+					SELECT coalesce(jsonb_typeof(v) = 'array', false)
+					   AND jsonb_array_length(v) > 0
+					   AND NOT EXISTS (
+					       SELECT 1 FROM jsonb_array_elements(v) AS e
+					        WHERE NOT coalesce(
+					                  jsonb_typeof(e) = 'object'
+					                  AND (e - 'site' - 'handle') = '{}'::jsonb
+					                  AND jsonb_typeof(e->'site') = 'string'
+					                  AND jsonb_typeof(e->'handle') = 'string',
+					              false))
+				$$;
+			CREATE OR REPLACE FUNCTION member_value_text(v jsonb) RETURNS text
+				LANGUAGE sql IMMUTABLE AS $$
+					SELECT CASE WHEN member_is_links(v) THEN (
+						SELECT string_agg(e->>'handle', ' ') FROM jsonb_array_elements(v) AS e
+					) ELSE coalesce(v #>> '{}', '') END
+				$$;
+			CREATE OR REPLACE FUNCTION member_search_values(d jsonb) RETURNS text
+				LANGUAGE sql IMMUTABLE AS $$
+					SELECT coalesce(string_agg(t, ' '), '')
+					FROM (SELECT member_value_text(value) AS t FROM jsonb_each(d)) AS x
+					WHERE lower(btrim(t)) NOT IN
+					      ('true', 'false', 'yes', 'no', 'y', 'n', 'x', '1', '0', 'checked', 'on')
+				$$;
+			ALTER TABLE member ADD COLUMN search_tsv tsvector
+				GENERATED ALWAYS AS (
+					to_tsvector('simple',
+						coalesce(name, '') || ' ' || coalesce(city, '') || ' ' ||
+						member_search_values(data))
+				) STORED;
+			CREATE INDEX IF NOT EXISTS member_search_tsv_idx
+				ON member USING gin (search_tsv);
+		`
 	}
 ];
 
@@ -925,7 +1077,10 @@ export const MIGRATIONS: Migration[] = [
 // page it serves is a 500. The deploy migrates before it builds the
 // replacement, and a failed build would leave that instance serving the dropped
 // schema until somebody noticed.
-export const WRITER_CUTOVER_VERSIONS: ReadonlySet<number> = new Set([13, 15, 16]);
+//
+// 22 drops member.linkedin, which an older instance selects by name, and
+// rewrites the LinkedIn values an older instance would write back as columns.
+export const WRITER_CUTOVER_VERSIONS: ReadonlySet<number> = new Set([13, 15, 16, 22]);
 
 // Why the gating runner must not apply a pending cutover migration yet, or null
 // when it may. Two conditions, because neither is enough alone: the operator
@@ -943,9 +1098,7 @@ export async function writerCutoverRefusal(
 		`SELECT to_regclass('schema_migrations')::text AS ledger`
 	);
 	if (!ledger) return null;
-	const { rows } = await client.query<{ version: number }>(
-		'SELECT version FROM schema_migrations'
-	);
+	const { rows } = await client.query<{ version: number }>('SELECT version FROM schema_migrations');
 	const done = new Set(rows.map((r) => r.version));
 	const pending = [...WRITER_CUTOVER_VERSIONS].filter((v) => !done.has(v));
 	if (pending.length === 0) return null;
@@ -983,7 +1136,8 @@ export async function writerCutoverRefusal(
 // booting is the replacement, so the one it replaced has already stopped.
 export async function migrateGated(
 	pool: pg.Pool,
-	stoppedFor: string | undefined
+	stoppedFor: string | undefined,
+	note?: (line: string) => void
 ): Promise<number[]> {
 	const client = await pool.connect();
 	try {
@@ -992,13 +1146,16 @@ export async function migrateGated(
 	} finally {
 		client.release();
 	}
-	return migrate(pool);
+	return migrate(pool, note);
 }
 
 // Apply any unapplied migrations in order. Idempotent. Takes a Pool so it
 // can grab a single dedicated client for the (session-scoped) advisory lock
 // + transaction. Returns the list of versions actually applied this run.
-export async function migrate(pool: pg.Pool): Promise<number[]> {
+export async function migrate(
+	pool: pg.Pool,
+	note: (line: string) => void = () => {}
+): Promise<number[]> {
 	const client = await pool.connect();
 	const applied: number[] = [];
 	try {
@@ -1020,6 +1177,7 @@ export async function migrate(pool: pg.Pool): Promise<number[]> {
 				(a, b) => a.version - b.version
 			);
 			for (const m of pending) {
+				if (m.run) note(await m.run(client));
 				await client.query(m.sql);
 				await client.query('INSERT INTO schema_migrations(version, name) VALUES ($1, $2)', [
 					m.version,

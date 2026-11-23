@@ -4,6 +4,8 @@
 	import Gravatar from '$lib/components/Gravatar.svelte';
 	import { splitBioLinks } from '$lib/bio-links';
 	import StarButton from '$lib/components/StarButton.svelte';
+	import SiteIcon from '$lib/components/SiteIcon.svelte';
+	import type { RenderedLink } from '$lib/links';
 	import { groupBase } from '$lib/group-nav';
 	import type { PageData } from './$types';
 
@@ -72,6 +74,7 @@
 		href?: string;
 		text?: string;
 		filter?: string;
+		links?: RenderedLink[];
 		sep: string;
 	};
 
@@ -91,6 +94,9 @@
 					sep: ', '
 				};
 			}
+			if (d.type === 'links') {
+				return { key: d.key, label: d.label, links: d.links ?? [], sep: '' };
+			}
 			if (d.type === 'list') {
 				return { key: d.key, label: d.label, entries: parseEntries(d.value), sep: ', ' };
 			}
@@ -103,6 +109,23 @@
 		})
 	);
 </script>
+
+{#snippet linkList(links: RenderedLink[])}
+	<ul class="flex flex-wrap gap-x-4 gap-y-1">
+		{#each links as l (l.site)}
+			<li>
+				<a
+					href={l.href}
+					target="_blank"
+					rel="nofollow noopener noreferrer ugc"
+					class="inline-flex items-center gap-1.5 break-all hover:underline"
+					><SiteIcon icon={l.icon} /><span class="sr-only">{l.label}:</span>
+					{l.handle}</a
+				>
+			</li>
+		{/each}
+	</ul>
+{/snippet}
 
 <svelte:head>
 	<title>{p.name ?? 'Member'} — {data.group.name}</title>
@@ -195,7 +218,9 @@
 					<div class="grid grid-cols-1 gap-1 px-6 py-4 sm:grid-cols-3 sm:gap-4">
 						<dt class="font-medium text-gray-900 dark:text-neutral-100">{d.label}</dt>
 						<dd class="text-gray-700 dark:text-neutral-300 sm:col-span-2">
-							{#if d.href}
+							{#if d.links}
+								{@render linkList(d.links)}
+							{:else if d.href}
 								<a
 									href={d.href}
 									target="_blank"
@@ -270,7 +295,9 @@
 				{#each data.privateFields as f (f.key)}
 					<div class="grid grid-cols-1 gap-1 px-6 py-4 sm:grid-cols-3 sm:gap-4">
 						<dt class="font-medium text-gray-900 dark:text-neutral-100">{f.label}</dt>
-						<dd class="text-gray-700 dark:text-neutral-300 sm:col-span-2">{f.value ?? '—'}</dd>
+						<dd class="text-gray-700 dark:text-neutral-300 sm:col-span-2">
+							{#if f.links?.length}{@render linkList(f.links)}{:else}{f.value ?? '—'}{/if}
+						</dd>
 					</div>
 				{/each}
 			</dl>

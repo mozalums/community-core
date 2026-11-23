@@ -4,11 +4,13 @@
 // them learn SMTP.
 
 import { magicLinkEmailParts } from '$lib/server/magic-link-message';
-import { APP_BASE_URL, COMPANY_NAME, COMPANY_SUPPORT_EMAIL } from '$lib/site';
+import { COMPANY_NAME, COMPANY_SUPPORT_EMAIL, siteUrl } from '$lib/site';
 import { brand, mail, site, theme } from '$skin/skin.yaml';
 
 import { env } from '$env/dynamic/private';
 import { sendMail } from '$lib/server/mail';
+
+const baseUrl = () => siteUrl(env.ORIGIN);
 
 // Values land in attributes as well as text, so quotes are escaped too.
 const esc = (s: string) =>
@@ -78,7 +80,7 @@ export async function sendMembershipApprovedEmail(args: {
 	const g = esc(args.groupName);
 
 	const html = `<div style="font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;color:#111827;line-height:1.5;max-width:480px;margin:0 auto;text-align:center">
-<img src="${APP_BASE_URL}/${brand.email_logo}" alt="${esc(site.name)}" width="180" style="max-width:100%;margin:0 0 20px;border:0" />
+<img src="${baseUrl()}/${brand.email_logo}" alt="${esc(site.name)}" width="180" style="max-width:100%;margin:0 0 20px;border:0" />
 <h1 style="font-size:22px;font-weight:800;margin:0 0 8px">You're in!</h1>
 <p style="margin:0 0 24px;color:#374151">Your membership to <strong>${g}</strong> has been approved. Welcome — sign in to explore the directory and reconnect with fellow members.</p>
 <a href="${esc(args.signInUrl)}" style="display:inline-block;background:${theme.light.accent};color:${theme.light.accentContrast};text-decoration:none;font-weight:600;padding:12px 22px;border-radius:9999px">Sign in to ${g} &rarr;</a>
@@ -102,7 +104,7 @@ export async function sendMembershipApprovedEmail(args: {
 // paragraph, one button, and the same in plain text.
 function actionMessage(args: { heading: string; body: string; button: string; url: string }) {
 	const html = `<div style="font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;color:#111827;line-height:1.5;max-width:480px;margin:0 auto;text-align:center">
-<img src="${APP_BASE_URL}/${brand.email_logo}" alt="${esc(site.name)}" width="180" style="max-width:100%;margin:0 0 20px;border:0" />
+<img src="${baseUrl()}/${brand.email_logo}" alt="${esc(site.name)}" width="180" style="max-width:100%;margin:0 0 20px;border:0" />
 <h1 style="font-size:22px;font-weight:800;margin:0 0 8px">${esc(args.heading)}</h1>
 <p style="margin:0 0 24px;color:#374151">${esc(args.body)}</p>
 <a href="${esc(args.url)}" style="display:inline-block;background:${theme.light.accent};color:${theme.light.accentContrast};text-decoration:none;font-weight:600;padding:12px 22px;border-radius:9999px">${esc(args.button)} &rarr;</a>
@@ -165,7 +167,7 @@ export async function sendEmailChangedNotice(args: {
  */
 export async function sendMagicLinkEmail(args: { toEmail: string; url: string }): Promise<void> {
 	const { subject, text, html } = magicLinkEmailParts(args.url, {
-		baseUrl: APP_BASE_URL,
+		baseUrl: baseUrl(),
 		emailLogo: brand.email_logo,
 		accent: theme.light.accent,
 		accentContrast: theme.light.accentContrast,

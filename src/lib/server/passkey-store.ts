@@ -17,7 +17,7 @@ import {
 import { decodeClientDataJSON, isoBase64URL } from '@simplewebauthn/server/helpers';
 import { env } from '$env/dynamic/private';
 import { site } from '$skin/skin.yaml';
-import { APP_APEX_DOMAIN, APP_BASE_URL } from '$lib/site';
+import { APP_APEX_DOMAIN, siteUrl } from '$lib/site';
 import { query } from '$lib/server/postgres';
 import { redis } from '$lib/server/redis';
 import { log } from '$lib/server/log';
@@ -33,12 +33,11 @@ const authKey = (challenge: string) => `${PREFIX}:passkey:auth:${sha256(challeng
 
 /**
  * The relying party. The ID is the apex so a passkey made on any subdomain
- * works on every other one; the origins are the ones this deployment serves
+ * works on every other one; the origin is the one this deployment serves
  * pages from.
  */
 export function relyingParty(): { rpID: string; origins: string[] } {
-	const origins = [env.ORIGIN, APP_BASE_URL].filter((o): o is string => Boolean(o));
-	return { rpID: APP_APEX_DOMAIN, origins: [...new Set(origins)] };
+	return { rpID: APP_APEX_DOMAIN, origins: [siteUrl(env.ORIGIN)] };
 }
 
 // The member's uuid as the WebAuthn user handle, so an assertion names the

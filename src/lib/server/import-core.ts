@@ -24,7 +24,15 @@ import {
 	ownValue,
 	type FieldDef
 } from './field-schema';
-import { LOGIN_KEY, STATUS_KEY, columnHeading, decodeCell, encodeCell } from './member-export';
+import {
+	JSON_CELL_PREFIX,
+	LOGIN_KEY,
+	STATUS_KEY,
+	columnHeading,
+	decodeCell,
+	encodeCell
+} from './member-export';
+import { checkLinks, offeredSites, parseLinksText, type LinkEntry } from '../links';
 
 export type ImportMode = 'merge' | 'replace';
 
@@ -230,6 +238,7 @@ export function parseImport(
 	out.keys = [...seen.keys()].filter((k) => k !== LOGIN_KEY);
 	if (out.errors.length) return out;
 
+	const linkFields = new Map(schema.filter((f) => f.type === 'links').map((f) => [f.key, f]));
 	const width = header.cells.length;
 	const byEmail = new Map<string, ImportRow>();
 	const badEmail: string[] = [];
@@ -260,7 +269,11 @@ export function parseImport(
 				const cell = rec.cells[c];
 				if (key === LOGIN_KEY) row.email = cell.trim();
 				else if (key === STATUS_KEY) row.status = cell.trim().toLowerCase();
-				else row.values[key] = cell.trim() === '' ? null : decodeCell(cell);
+				else if (cell.trim() === '') row.values[key] = null;
+				else {
+					const f = linkFields.get(key);
+					row.values[key] = f ? linksCell(cell, f) : decodeCell(cell);
+				}
 			});
 		} catch (e) {
 			out.errors.push(`${rowRef(pos)}: ${(e as Error).message}.`);
@@ -304,6 +317,19 @@ export function parseImport(
 		);
 	}
 	return out;
+}
+
+// A links cell as the export writes it, `site:handle` pairs, each through
+// the check a profile save applies. Throws with the row's problem.
+function linksCell(cell: string, f: FieldDef): LinkEntry[] {
+	if (cell.startsWith(JSON_CELL_PREFIX)) {
+		throw new Error(`${f.label}: write the links as site:handle pairs, not JSON`);
+	}
+	const { entries, malformed } = parseLinksText(cell);
+	if (malformed.length) throw new Error(`${f.label}: "${malformed[0]}" is not a site:handle pair`);
+	const c = checkLinks(entries, offeredSites(f));
+	if (!c.ok) throw new Error(`${f.label}: ${c.message}`);
+	return c.entries;
 }
 
 function plural(n: number, one: string, many: string): string {
@@ -459,7 +485,14 @@ export function diffImport(
 // What the admin is shown, hashed. Apply recomputes the diff against the roster
 // as it stands under the lock and refuses unless this matches the digest that
 // was on screen, so the change applied is the change that was read.
-export function diffDigest(diff: ImportDiff): string {
+// The digest a saved plan is applied against. It covers the field
+// definitions as well as the diff, so a skin deployment between preview and
+// apply (a field renamed, retyped, or a links site dropped) drifts the plan
+// rather than writing values the current fields would refuse.
+export function diffDigest(
+	diff: ImportDiff,
+	schema: readonly FieldDef[] = DEFAULT_FIELD_SCHEMA
+): string {
 	const byEmail = <T extends { email: string }>(xs: T[]) =>
 		[...xs].sort((a, b) => a.email.toLowerCase().localeCompare(b.email.toLowerCase()));
 	const sortedEntries = (o: Record<string, unknown>) =>
@@ -482,7 +515,8 @@ export function diffDigest(diff: ImportDiff): string {
 				.map((x) => [x.key, comparable(x.before), comparable(x.after)])
 		]),
 		removed: byEmail(diff.removed).map((r) => [r.email.toLowerCase(), r.via]),
-		unchanged: diff.unchanged
+		unchanged: diff.unchanged,
+		fields: schema
 	};
 	return createHash('sha256').update(JSON.stringify(body)).digest('hex');
 }

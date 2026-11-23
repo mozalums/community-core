@@ -26,14 +26,16 @@ const RENAMED_FIELDS: readonly SkinField[] = [
 		type: 'text',
 		visibility: 'members',
 		role: 'givenName',
-		column: 'name'
+		column: 'name',
+		required: true
 	},
 	{
 		key: 'workProfile',
 		label: 'Work profile',
-		type: 'url',
+		type: 'links',
 		visibility: 'members',
-		column: 'linkedin'
+		sites: ['linkedin', 'github'],
+		required: true
 	},
 	{ key: 'crew', label: 'Crew', type: 'checkbox', visibility: 'members', role: 'affiliation' },
 	{
@@ -136,7 +138,9 @@ test('R6: a request stores every control under its role’s key and joins the na
 	const res = await post({
 		firstName: 'Nomi',
 		lastName: 'Vance',
-		linkedin: 'https://example.org/nomi',
+		'workProfile:links': '',
+		'workProfile:site': 'linkedin',
+		'workProfile:handle': 'https://www.linkedin.com/in/nomi/?trk=x',
 		aff_crew: 'on',
 		otherAffiliations: 'Local group',
 		publicProfile: 'on'
@@ -145,7 +149,7 @@ test('R6: a request stores every control under its role’s key and joins the na
 	const stored = {
 		surname: 'Vance',
 		forename: 'Nomi',
-		workProfile: 'https://example.org/nomi',
+		workProfile: [{ site: 'linkedin', handle: 'nomi' }],
 		crew: 'TRUE',
 		otherGroups: 'Local group',
 		showOnHome: 'TRUE'
@@ -162,10 +166,7 @@ test('R6: a request stores every control under its role’s key and joins the na
 		actorSubject: 'email:admin@example.org'
 	});
 	const member = db.members[0];
-	assert.deepEqual(
-		{ name: member.name, linkedin: member.linkedin, data: member.data },
-		{ name: 'Vance Nomi', linkedin: 'https://example.org/nomi', data: stored }
-	);
+	assert.deepEqual({ name: member.name, data: member.data }, { name: 'Vance Nomi', data: stored });
 
 	// Read back into the edit form: each value under the control that posts it.
 	const row = { ...member, data: member.data, privateData: member.private_data };
@@ -174,7 +175,7 @@ test('R6: a request stores every control under its role’s key and joins the na
 		[
 			['surname', 'Vance'],
 			['forename', 'Nomi'],
-			['workProfile', 'https://example.org/nomi'],
+			['workProfile', ''],
 			['about', ''],
 			['phone', '']
 		]
@@ -193,10 +194,9 @@ test('R6: a request stores every control under its role’s key and joins the na
 	});
 });
 
-test('R6: the given name is the required part wherever the skin lists it, and a refusal echoes each control', async () => {
+test('a name part the skin marks required is refused blank wherever the skin lists it, and a refusal echoes each control', async () => {
 	const res = await post({
 		lastName: 'Vance',
-		linkedin: 'https://example.org/nomi',
 		otherAffiliations: 'Local group',
 		publicProfile: 'on'
 	});
@@ -205,17 +205,22 @@ test('R6: the given name is the required part wherever the skin lists it, and a 
 	assert.deepEqual(res.data.values, {
 		lastName: 'Vance',
 		firstName: '',
-		linkedin: 'https://example.org/nomi',
 		otherAffiliations: 'Local group'
 	});
 	assert.equal(res.data.publicProfile, true);
 	assert.equal(db.requests.length, 0);
 
-	// A family name alone is not required.
+	// A links field the skin marks required needs one link.
+	const noLink = await post({ firstName: 'Nomi' });
+	assert.equal(noLink.status, 400);
+	assert.equal(noLink.data.error, 'Work profile: at least one link is required.');
+	assert.equal(db.requests.length, 0);
+
+	// The family name is not marked required, and no affiliation is.
 	const ok = await post({
 		firstName: 'Nomi',
-		linkedin: 'https://example.org/nomi',
-		aff_crew: 'on'
+		'workProfile:site': 'github',
+		'workProfile:handle': 'nomi'
 	});
 	assert.equal(ok.submitted, true);
 	assert.equal(db.requests[0].name, 'Nomi');

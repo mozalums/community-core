@@ -72,7 +72,6 @@ const MEMBER = {
 	identSubject: 'oidc:ada',
 	name: 'Ada Byron',
 	city: null,
-	linkedin: null,
 	data: {},
 	status: 'active'
 };

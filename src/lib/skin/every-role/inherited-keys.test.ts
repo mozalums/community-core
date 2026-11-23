@@ -25,7 +25,6 @@ const { diffFields } = await import('$lib/server/audit-core');
 const EMPTY = {
 	name: null,
 	city: null,
-	linkedin: null,
 	email: 'nomi@example.org',
 	identSubject: null,
 	data: {},
@@ -46,7 +45,7 @@ test('a member who stored nothing reads empty under every inherited key', () => 
 		other: '',
 		publicProfile: false
 	});
-	assert.deepEqual(promotedColumns({}), { email: null, name: null, city: null, linkedin: null });
+	assert.deepEqual(promotedColumns({}), { email: null, name: null, city: null });
 	for (const key of KEYS) {
 		assert.equal(ownValue({}, key), undefined, key);
 		assert.equal(
@@ -100,8 +99,7 @@ test('a value posted under every inherited key is stored, derived, audited and r
 	assert.deepEqual(Object.fromEntries(Object.entries(encodeValues(patch))), want);
 	assert.deepEqual(deriveColumns(next, changed), {
 		name: 'Nomi Vance',
-		city: 'Leeds',
-		linkedin: 'https://example.org/nomi'
+		city: 'Leeds'
 	});
 
 	const audit = auditDiff(changed, {}, next, false);

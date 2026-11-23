@@ -14,6 +14,7 @@ import {
 } from '$lib/server/field-schema';
 import { avatarIdFor } from '$lib/server/avatars';
 import { profileHref } from '$lib/server/profile-url';
+import { offeredSites, renderLinks, storedLinks, type RenderedLink } from '$lib/links';
 import { isStarred } from '$lib/server/stars';
 import type { PageServerLoad } from './$types';
 
@@ -51,6 +52,9 @@ export type ProfileDetail = {
 	// Set on a field the directory filters on: the query string (no `?`) that
 	// finds the members holding this value in this field.
 	filter?: string;
+	// A links field's entries the skin still offers, each with the address
+	// its site's definition builds from the stored handle.
+	links?: RenderedLink[];
 };
 
 export const load: PageServerLoad = async ({ params, locals, parent, url }) => {
@@ -78,8 +82,7 @@ export const load: PageServerLoad = async ({ params, locals, parent, url }) => {
 	const columns: Record<string, string | null> = {
 		email: member.email,
 		name: member.name,
-		city: member.city,
-		linkedin: member.linkedin
+		city: member.city
 	};
 	// Visibility gates the promoted column as well as the jsonb copy: a private
 	// field whose value also sits in a typed column would otherwise reach the
@@ -136,7 +139,12 @@ export const load: PageServerLoad = async ({ params, locals, parent, url }) => {
 	};
 
 	const details: ProfileDetail[] = [];
-	const privateFields: { key: string; label: string; value: string | null }[] = [];
+	const privateFields: {
+		key: string;
+		label: string;
+		value: string | null;
+		links?: RenderedLink[];
+	}[] = [];
 	let associationsPlaced = false;
 	for (const f of fields) {
 		if (f.role === 'affiliation' || f.role === 'affiliationOther') {
@@ -153,6 +161,19 @@ export const load: PageServerLoad = async ({ params, locals, parent, url }) => {
 			continue;
 		}
 		if (OWN_PLACE.has(f.role)) continue;
+		if (f.type === 'links') {
+			if (!visible(f)) continue;
+			// Private or not, a link is shown only as the server builds it, and
+			// never for a site the skin stopped offering.
+			const links = renderLinks(storedLinks(stored(f)), offeredSites(f));
+			if (f.visibility === 'private') {
+				privateFields.push({ key: f.key, label: f.label, value: null, links });
+				continue;
+			}
+			if (links.length)
+				details.push({ key: f.key, label: f.label, type: 'links', value: '', links });
+			continue;
+		}
 		if (f.visibility === 'private') {
 			if (isGroupAdmin) privateFields.push({ key: f.key, label: f.label, value: valueOf(f) });
 			continue;

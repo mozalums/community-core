@@ -8,6 +8,7 @@
 
 import { parse } from 'yaml';
 import { ANALYTICS_PROVIDERS } from './analytics.js';
+import { CORE_SITE_IDS, coreSite, templateProblem } from '../links';
 
 type StringNode = { kind: 'string'; pattern?: RegExp; expect?: string };
 type VersionNode = { kind: 'version' };
@@ -74,7 +75,10 @@ export const FIELD_TYPES = [
 	'year',
 	'url',
 	'email',
-	'checkbox'
+	'checkbox',
+	// Links to a member's profiles elsewhere, one per site, from the sites the
+	// field's `sites` and `custom` offer (src/lib/links.ts).
+	'links'
 ] as const;
 
 // 'members': any signed-in member sees it on the profile, and search reads it.
@@ -92,7 +96,8 @@ const NOT_ONE_VALUE_TYPES: readonly (typeof FIELD_TYPES)[number][] = [
 	'list',
 	'url',
 	'email',
-	'checkbox'
+	'checkbox',
+	'links'
 ];
 
 // A role is how core finds a field without knowing its key or label.
@@ -143,7 +148,10 @@ export const NO_TEXT_CONTROL_ROLES: readonly (typeof FIELD_ROLES)[number][] = [
 ];
 
 // The member row's typed columns, derived from the fields that name one.
-export const PROMOTED_COLUMNS = ['email', 'name', 'city', 'linkedin'] as const;
+export const PROMOTED_COLUMNS = ['email', 'name', 'city'] as const;
+
+const SITE_ID = /^[a-z0-9][a-z0-9-]*$/;
+const SITE_ID_TEXT = 'a site id (a-z, 0-9, -)';
 
 export const SKIN_SCHEMA = object({
 	schema: { kind: 'version' },
@@ -208,7 +216,25 @@ export const SKIN_SCHEMA = object({
 			placeholder: optional(string()),
 			options: optional(oneOf(OPTION_SETS)),
 			required: optional(boolean()),
-			filter: optional(oneOf(FIELD_FILTERS))
+			filter: optional(oneOf(FIELD_FILTERS)),
+			// A links field only: the ids of core's sites it offers, in menu order.
+			sites: optional(list(string({ pattern: SITE_ID, expect: SITE_ID_TEXT }))),
+			// A links field only: sites of the skin's own, in the form core's take.
+			// `social-links` reads the handle out of the address template, so a
+			// site needs no pattern of its own.
+			custom: optional(
+				list(
+					object({
+						id: string({ pattern: SITE_ID, expect: SITE_ID_TEXT }),
+						label: string(),
+						icon: assetPath(/\.(svg|png)$/, 'an .svg or .png path under static/'),
+						url: string(),
+						wikidata: optional(
+							string({ pattern: /^P[1-9]\d*$/, expect: 'a property id like P6634' })
+						)
+					})
+				)
+			)
 		})
 	)
 });
@@ -418,7 +444,7 @@ function checkFields(fields: readonly SkinField[], issues: SkinIssue[]): void {
 		const multiline =
 			f.role === 'bio'
 				? 'a field with role bio'
-				: f.type === 'longtext' || f.type === 'list'
+				: f.type === 'longtext' || f.type === 'list' || f.type === 'links'
 					? `a ${f.type} field`
 					: '';
 		if (f.required !== undefined && noControl) {
@@ -472,6 +498,7 @@ function checkFields(fields: readonly SkinField[], issues: SkinIssue[]): void {
 			});
 		}
 	});
+	fields.forEach((f, i) => checkLinksField(f, i, issues));
 	// member.name is read from the fields naming that column, so a name field
 	// outside it would be stored and never shown as the member's name.
 	fields.forEach((f, i) => {
@@ -481,6 +508,71 @@ function checkFields(fields: readonly SkinField[], issues: SkinIssue[]): void {
 				found: f.column ? `the string "${f.column}"` : 'nothing',
 				expected: `name (a field with role ${f.role} feeds the member's name)`
 			});
+		}
+	});
+}
+
+// A links field offers at least one site, each id once, core's by id and the
+// skin's own in full. A custom site's address must follow core's template rule
+// (templateProblem), because a template that fails it would surface as a
+// member's save refused or a link never shown.
+function checkLinksField(f: SkinField, i: number, issues: SkinIssue[]): void {
+	const at = `fields[${i}]`;
+	if (f.type !== 'links') {
+		for (const key of ['sites', 'custom'] as const) {
+			if (f[key] === undefined) continue;
+			issues.push({
+				path: `${at}.${key}`,
+				found: `${key} on a ${f.type} field`,
+				expected: `no ${key} key (only a links field offers sites)`
+			});
+		}
+		return;
+	}
+	const sites = f.sites ?? [];
+	const custom = f.custom ?? [];
+	if (!sites.length && !custom.length) {
+		issues.push({
+			path: `${at}.sites`,
+			found: 'no site',
+			expected: 'at least one site in sites or custom'
+		});
+	}
+	const ids = new Set<string>();
+	const seen = (id: string, path: string) => {
+		if (ids.has(id)) {
+			issues.push({
+				path,
+				found: `"${id}" again`,
+				expected: 'a site id no other site in this field uses'
+			});
+		}
+		ids.add(id);
+	};
+	sites.forEach((id, j) => {
+		const path = `${at}.sites[${j}]`;
+		if (!coreSite(id)) {
+			issues.push({
+				path,
+				found: `the unknown site "${id}"`,
+				expected: `one of core's sites: ${CORE_SITE_IDS.join(', ')}, or a custom entry`
+			});
+		}
+		seen(id, path);
+	});
+	custom.forEach((c, j) => {
+		const path = `${at}.custom[${j}]`;
+		if (coreSite(c.id)) {
+			issues.push({
+				path: `${path}.id`,
+				found: `"${c.id}", one of core's sites`,
+				expected: `another id, or "${c.id}" under sites`
+			});
+		}
+		seen(c.id, `${path}.id`);
+		const problem = templateProblem(c.url);
+		if (problem) {
+			issues.push({ path: `${path}.url`, found: JSON.stringify(c.url), expected: problem });
 		}
 	});
 }

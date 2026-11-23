@@ -162,7 +162,6 @@ test('on the default skin a request stores a whole name, no email copy and no af
 	// Controls the default skin has no field for are not stored under any key.
 	await submit({
 		...FILLED,
-		linkedin: 'https://example.org/nomi',
 		aff_staff: 'on',
 		publicProfile: 'on',
 		otherAffiliations: 'Chess club'
@@ -180,18 +179,36 @@ test('on the default skin a request stores a whole name, no email copy and no af
 			email: APPLICANT,
 			name: 'Nomi Vance',
 			city: null,
-			linkedin: null,
 			data: { name: 'Nomi Vance' },
 			private_data: {}
 		}
 	);
 });
 
-test('a request with no name is refused and writes nothing', async () => {
+test('a pending request holding a LinkedIn URL converts to a link, then approves into the member', async () => {
+	const { convertLinkedinValue } = await import('./migrations');
+	const { currentSkin } = await import('../skin/load');
+	assert.equal((await submit()).submitted, true);
+	const data: Record<string, unknown> = {
+		name: 'Nomi Vance',
+		linkedin: 'https://www.linkedin.com/in/nomi/'
+	};
+	const fields = currentSkin().skin.fields;
+	assert.equal(convertLinkedinValue(null, { data, privateData: data }, fields), 'linkedin');
+	assert.deepEqual(data, { name: 'Nomi Vance', links: [{ site: 'linkedin', handle: 'nomi' }] });
+	db.requests[0].data = data as never;
+	await decide('approve', { id: pendingId() });
+	assert.deepEqual(db.members[0].data, {
+		name: 'Nomi Vance',
+		links: [{ site: 'linkedin', handle: 'nomi' }]
+	});
+});
+
+test('a request with no name is accepted, as the default skin does not mark its name required', async () => {
 	const res = await submit({ firstName: 'Nomi', lastName: 'Vance' });
-	assert.equal(res.status, 400);
-	assert.equal(res.data?.error, 'Name is required.');
-	assert.equal(db.requests.length, 0);
+	assert.equal(res.submitted, true, JSON.stringify(res));
+	assert.equal(db.requests.length, 1);
+	assert.equal(Object.hasOwn(db.requests[0].data, 'name'), false);
 });
 
 // ---------------------------------------------------------------------------
@@ -227,7 +244,7 @@ test('docs/features.md lists the fields the request form collects, and not the o
 	const section = readme.split(/^## Membership requests$/m)[1]?.split(/^## /m)[0] ?? '';
 	assert.ok(section, 'docs/features.md has no Membership requests section');
 	// The affiliations are the skin's, so the page counts them per skin, not as six.
-	for (const field of [/first and\s+last name/, /LinkedIn URL/, /one\s+checkbox per `affiliation` field/]) {
+	for (const field of [/first and\s+last name/, /`links`\s+field/, /one\s+checkbox per `affiliation` field/]) {
 		assert.match(section, field);
 	}
 	assert.doesNotMatch(section, /handle, city, town, country/);
@@ -388,7 +405,6 @@ test('approving an address that is already an active member keeps their profile'
 		email: APPLICANT,
 		name: 'Edited Name',
 		city: null,
-		linkedin: null,
 		data: { bio: 'mine' },
 		private_data: {},
 		status: 'active'

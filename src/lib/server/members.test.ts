@@ -169,8 +169,8 @@ test('a hit names the matched fields, grouped by label, from the per-word lists'
 	const sql = flat(calls[0].sql);
 	const [, keys, labels] =
 		sql.match(/unnest\(\$(\d+)::text\[\], \$(\d+)::text\[\]\) WITH ORDINALITY AS l/) ?? [];
-	assert.deepEqual(calls[0].params[Number(keys) - 1], ['name', 'country', 'city', 'bio']);
-	assert.deepEqual(calls[0].params[Number(labels) - 1], ['Name', 'Country', 'City', 'Bio']);
+	assert.deepEqual(calls[0].params[Number(keys) - 1], ['name', 'country', 'city', 'bio', 'links']);
+	assert.deepEqual(calls[0].params[Number(labels) - 1], ['Name', 'Country', 'City', 'Bio', 'Links']);
 });
 
 test('ranking puts a whole-word name match, then any whole word, then a substring, before ts_rank', async () => {
@@ -251,18 +251,18 @@ test('data values are matched under the members-visible keys alone', async () =>
 	const lScopes = (sql.match(/ AS l\(k[,)]/g) ?? []).length;
 	assert.equal(allowed.length, lScopes + 1, 'a data clause reads keys no allowlist names');
 	assert.ok(lScopes >= 4, 'the per-key clauses moved; point this test at them');
-	for (const keys of allowed) assert.deepEqual(keys, ['name', 'country', 'city', 'bio']);
+	for (const keys of allowed) assert.deepEqual(keys, ['name', 'country', 'city', 'bio', 'links']);
 	// The name tier narrows a listed scope to the name's parts; it never widens it.
 	const nameParts = boundKeys(calls[0], /l\.k = ANY\(\$(\d+)::text\[\]\)/g);
 	assert.ok(nameParts.length > 0, 'the name tier moved; point this test at it');
 	for (const keys of nameParts)
-		for (const k of keys as string[]) assert.ok(['name', 'country', 'city', 'bio'].includes(k), k);
+		for (const k of keys as string[]) assert.ok(['name', 'country', 'city', 'bio', 'links'].includes(k), k);
 	// Which visible keys hold checkbox markers narrows how a value tokenizes;
 	// it never names a key the scope lacks.
 	const markerKeys = boundKeys(calls[0], /CASE WHEN e\.k = ANY\(\$(\d+)::text\[\]\)/g);
 	assert.equal(markerKeys.length, 1, 'the checkbox marker list moved; point this test at it');
 	for (const keys of markerKeys)
-		for (const k of keys as string[]) assert.ok(['name', 'country', 'city', 'bio'].includes(k), k);
+		for (const k of keys as string[]) assert.ok(['name', 'country', 'city', 'bio', 'links'].includes(k), k);
 	const dataReads = sql.match(/member\.data->>?[\w.$]+/g) ?? [];
 	for (const r of dataReads)
 		assert.match(r, /^member\.data->>?[lb]\.k$/, `${r} reads an unlisted key`);
@@ -280,9 +280,7 @@ test('% _ and \\ in a word reach every ILIKE as literals', async () => {
 	const TAIL = String.raw`), '([\\%_])', '\\\1', 'g') || '%') ESCAPE '\'`;
 	const ilikes = [...flat(c.sql).matchAll(/ILIKE (\S+)/g)];
 	// name, city, the data values and the checkbox labels, each in the match,
-	// the ranking and the matched-field labels, and the city filter. The
-	// default skin feeds no field into linkedin, so nothing the profile shows
-	// lives there.
+	// the ranking and the matched-field labels, and the city filter.
 	assert.equal(ilikes.length, 15);
 	const sql = flat(c.sql);
 	for (const m of ilikes) {

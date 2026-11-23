@@ -29,6 +29,7 @@ import {
 	type Patch
 } from '$lib/server/member-write';
 import { USERNAME_CONTROL, checkUsername } from '$lib/server/usernames';
+import { offeredSites, storedLinks, type LinkEntry, type SiteDef } from '$lib/links';
 import type { Member, MemberWithPrivate, Actor } from '$lib/server/members';
 import type { Group } from '$lib/server/groups';
 
@@ -43,6 +44,8 @@ export type EditField = {
 	options?: OptionSet;
 	required?: boolean;
 	url?: boolean;
+	// A links field: the sites it offers and the member's entries.
+	links?: { sites: SiteDef[]; entries: LinkEntry[] };
 };
 export type FieldSpec = {
 	// The field-schema key, which is also the form control's name.
@@ -63,6 +66,8 @@ export type FieldSpec = {
 	required?: boolean;
 	// A `type: url` field, which the form offers as a URL input.
 	url?: boolean;
+	// A `type: links` field's sites, in menu order.
+	links?: SiteDef[];
 };
 
 // The profile form's text fields, in schema order. Shared with the
@@ -77,7 +82,8 @@ export function editableFor(): FieldSpec[] {
 		placeholder: f.placeholder,
 		options: f.options,
 		required: f.required || undefined,
-		url: f.type === 'url' || undefined
+		url: f.type === 'url' || undefined,
+		links: f.type === 'links' ? offeredSites(f) : undefined
 	}));
 }
 
@@ -95,7 +101,7 @@ function valuesOf(member: MemberWithPrivate): Record<string, unknown> {
 const asText = (v: unknown) => (v == null ? '' : String(v));
 
 // The typed columns the form can rebuild on save, each from the fields naming it.
-const TYPED: readonly Exclude<PromotedColumn, 'email'>[] = ['name', 'city', 'linkedin'];
+const TYPED: readonly Exclude<PromotedColumn, 'email'>[] = ['name', 'city'];
 
 // A member whose typed column has none of its fields stored (a sheet row that
 // carried a "Full Name" rather than First and Last) gets that column's form
@@ -131,14 +137,17 @@ export function readEditFields(member: MemberWithPrivate): EditField[] {
 	return editableFor().map((f) => ({
 		name: f.name,
 		label: f.label,
-		value: asText(ownValue(values, f.name)) || (ownValue(fallback, f.name) ?? ''),
+		value: f.links ? '' : asText(ownValue(values, f.name)) || (ownValue(fallback, f.name) ?? ''),
 		multiline: f.multiline,
 		private: f.private,
 		bio: f.bio,
 		placeholder: f.placeholder,
 		options: f.options,
 		required: f.required,
-		url: f.url
+		url: f.url,
+		...(f.links
+			? { links: { sites: f.links, entries: storedLinks(ownValue(values, f.name)) } }
+			: {})
 	}));
 }
 
@@ -169,6 +178,9 @@ export type ProfileUpdate = {
 	// field key → value, every text field the form submitted. Passed through
 	// whole, so a name the schema does not know is refused rather than dropped.
 	updates: Record<string, string>;
+	// links field key → its rows in order. A field is here when the form
+	// carried it, so an empty list removes every link.
+	links?: Record<string, LinkEntry[]>;
 	// affiliation key → checked. A known box absent here is unticked.
 	checks: Record<string, boolean>;
 	other: string;
@@ -179,7 +191,7 @@ export type ProfileUpdate = {
 // (an unticked box is absent from a form post, so absent means false), the
 // free-text "Other" and the public-profile opt-in.
 export function profilePatch(u: ProfileUpdate): Patch {
-	const patch: Patch = Object.assign(ownKeys<string | boolean>(), u.updates);
+	const patch: Patch = Object.assign(ownKeys<Patch[string]>(), u.updates, u.links ?? {});
 	for (const a of AFFILIATIONS) patch[a.key] = false;
 	for (const [key, on] of Object.entries(u.checks)) patch[key] = on;
 	if (OTHER_AFFILIATION_KEY) patch[OTHER_AFFILIATION_KEY] = u.other;
@@ -200,21 +212,48 @@ const ownKeys = <T>(): Record<string, T> => Object.create(null);
 // name the field schema does not know reaches the write path and is refused
 // there, and so does a fixed name on a skin with no field in that role.
 export function formUpdate(form: FormData): ProfileUpdate {
+	const links: Record<string, LinkEntry[]> = ownKeys();
 	const u: ProfileUpdate = {
 		updates: ownKeys(),
+		links,
 		checks: ownKeys(),
 		other: '',
 		publicProfile: false
 	};
+	const rows: Record<string, { sites: string[]; handles: string[] }> = ownKeys();
 	for (const [name, v] of form) {
 		const value = typeof v === 'string' ? v.trim() : '';
+		const link = LINK_CONTROL.exec(name);
+		if (link) {
+			const r = (rows[link[1]] ??= { sites: [], handles: [] });
+			if (link[2] === 'site') r.sites.push(value);
+			else if (link[2] === 'handle') r.handles.push(value);
+			continue;
+		}
 		if (name.startsWith(AFFILIATION_CONTROL_PREFIX)) {
 			u.checks[name.slice(AFFILIATION_CONTROL_PREFIX.length)] = true;
 		} else if (name === OTHER_AFFILIATION_CONTROL && OTHER_AFFILIATION_KEY) u.other = value;
 		else if (name === PUBLIC_PROFILE_CONTROL && PUBLIC_PROFILE_KEY) u.publicProfile = true;
 		else u.updates[name] = value;
 	}
+	for (const [key, r] of Object.entries(rows)) links[key] = linkRows(r.sites, r.handles);
 	return u;
+}
+
+// A links field's controls: `<key>:site` and `<key>:handle` once per row, in
+// order, and `<key>:links` always. No field key holds a colon.
+const LINK_CONTROL = /^([^:]+):(site|handle|links)$/;
+
+// A row with neither a site nor a value is a blank row the member left, and
+// is dropped; one with a value and no site reaches the check and is refused.
+export function linkRows(sites: readonly string[], handles: readonly string[]): LinkEntry[] {
+	const out: LinkEntry[] = [];
+	for (let i = 0; i < Math.max(sites.length, handles.length); i++) {
+		const site = sites[i] ?? '';
+		const handle = handles[i] ?? '';
+		if (handle) out.push({ site, handle });
+	}
+	return out;
 }
 
 // What a refused save hands back to refill the form: the fields the form
@@ -225,6 +264,16 @@ export function formEcho(u: ProfileUpdate): Record<string, string> {
 	const echo: Record<string, string> = {};
 	for (const f of editableFields()) {
 		if (Object.hasOwn(u.updates, f.key)) echo[f.key] = u.updates[f.key];
+	}
+	return echo;
+}
+
+// The rows a refused save posted, per links field the skin declares.
+export function linksEcho(u: ProfileUpdate): Record<string, LinkEntry[]> {
+	const echo: Record<string, LinkEntry[]> = {};
+	for (const f of editableFields()) {
+		if (f.type === 'links' && u.links && Object.hasOwn(u.links, f.key))
+			echo[f.key] = u.links[f.key];
 	}
 	return echo;
 }

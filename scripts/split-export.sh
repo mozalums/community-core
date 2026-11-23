@@ -177,7 +177,7 @@ fi
 
 echo "split-export: ${sha} ($skin) exported"
 for tree in core skin; do
-	line="  $tree  $target/$tree  $(find "$target/$tree" -type f -not -path "$target/$tree/.git/*" | wc -l | tr -d ' ') files"
+	line="  $tree  $target/$tree  $(find "$target/$tree" -path "$target/$tree/.git" -prune -o -type f -print | wc -l | tr -d ' ') files"
 	((init)) && line+="  one commit $("${isolated[@]}" git -C "$target/$tree" rev-parse HEAD)"
 	echo "$line"
 done

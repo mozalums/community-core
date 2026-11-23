@@ -120,7 +120,7 @@ test('a posted public-profile box is stored under no key and publishes nobody', 
 	assert.deepEqual(shown, []);
 });
 
-test('the form asks for no public profile, affiliation or LinkedIn URL', async () => {
+test('the form asks for no public profile or affiliation, and offers the skin’s links field', async () => {
 	const data = (await load({
 		parent: async () => ({ member: null, isGroupAdmin: false }),
 		params: { slug: 'example' },
@@ -128,9 +128,12 @@ test('the form asks for no public profile, affiliation or LinkedIn URL', async (
 		url: new URL('https://www.example.org/group/example/request')
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	} as any)) as any;
-	assert.deepEqual(data.nameControls, [{ control: 'name', required: true }]);
+	assert.deepEqual(data.nameControls, [{ control: 'name', required: false }]);
+	assert.deepEqual(
+		data.linkFields.map((f: { name: string; required: boolean }) => [f.name, f.required]),
+		[['links', false]]
+	);
 	assert.deepEqual(data.asks, {
-		linkedin: false,
 		affiliation: false,
 		otherAffiliation: false,
 		publicProfile: false

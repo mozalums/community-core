@@ -64,7 +64,7 @@ export async function lockRosterShared(client: Db, groupId: string): Promise<voi
 // ---------------------------------------------------------------------------
 
 type TypedColumn = Exclude<PromotedColumn, 'email'>;
-const TYPED: readonly TypedColumn[] = ['name', 'city', 'linkedin'];
+const TYPED: readonly TypedColumn[] = ['name', 'city'];
 
 export type StoredMember = RosterMember & Record<TypedColumn, string | null>;
 
@@ -83,10 +83,9 @@ export async function loadRoster(
 		private_data: string | null;
 		name: string | null;
 		city: string | null;
-		linkedin: string | null;
 	}>(
 		`SELECT id, email::text AS email, status, data::text AS data,
-		        private_data::text AS private_data, name, city, linkedin
+		        private_data::text AS private_data, name, city
 		   FROM member
 		  WHERE group_id = $1
 		  ORDER BY lower(email), id${opts.forUpdate ? '\n\t\t  FOR UPDATE' : ''}`,
@@ -101,8 +100,7 @@ export async function loadRoster(
 		data: bag(r.data),
 		privateData: bag(r.private_data),
 		name: r.name,
-		city: r.city,
-		linkedin: r.linkedin
+		city: r.city
 	}));
 }
 

@@ -62,42 +62,49 @@ The following table lists every key in the order the schema declares it. No key 
 
 <!-- skin-keys:begin -->
 
-| Key                    | Type                                                                                                                                                                    | Required | Default | Example                                                |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | ------- | ------------------------------------------------------ |
-| `schema`               | integer (1)                                                                                                                                                             | yes      | none    | `schema: 1`                                            |
-| `id`                   | string                                                                                                                                                                  | yes      | none    | `id: default`                                          |
-| `site`                 | mapping                                                                                                                                                                 | yes      | none    | See the following rows.                                |
-| `site.domain`          | string                                                                                                                                                                  | yes      | none    | `domain: example.org`                                  |
-| `site.legal_name`      | string                                                                                                                                                                  | yes      | none    | `legal_name: Example Community`                        |
-| `site.name`            | string                                                                                                                                                                  | yes      | none    | `name: Example Community`                              |
-| `site.default_group`   | string                                                                                                                                                                  | yes      | none    | `default_group: example`                               |
-| `mail`                 | mapping                                                                                                                                                                 | yes      | none    | See the following rows.                                |
-| `mail.from_name`       | string                                                                                                                                                                  | yes      | none    | `from_name: Example Community`                         |
-| `mail.sign_in_subject` | string                                                                                                                                                                  | yes      | none    | `sign_in_subject: Your Example Community sign-in link` |
-| `mail.signature`       | string                                                                                                                                                                  | yes      | none    | `signature: Example Community`                         |
-| `mail.credit`          | mapping                                                                                                                                                                 | no       | none    | See the following rows.                                |
-| `mail.credit.name`     | string                                                                                                                                                                  | yes      | none    | `name: Sign Co`                                        |
-| `mail.credit.url`      | string                                                                                                                                                                  | yes      | none    | `url: https://sign.example.net/`                       |
-| `brand`                | mapping                                                                                                                                                                 | yes      | none    | See the following rows.                                |
-| `brand.wordmark`       | string                                                                                                                                                                  | yes      | none    | `wordmark: imgs/wordmark.svg`                          |
-| `brand.mark`           | string                                                                                                                                                                  | yes      | none    | `mark: imgs/mark.svg`                                  |
-| `brand.email_logo`     | string                                                                                                                                                                  | yes      | none    | `email_logo: email/shared/logo.png`                    |
-| `analytics`            | mapping                                                                                                                                                                 | no       | none    | See the following rows.                                |
-| `analytics.provider`   | one of `fathom`                                                                                                                                                         | yes      | none    | `provider: fathom`                                     |
-| `analytics.site`       | string                                                                                                                                                                  | yes      | none    | `site: ABCDEFGH`                                       |
-| `auth`                 | mapping                                                                                                                                                                 | no       | none    | See the following rows.                                |
-| `auth.passkeys`        | boolean                                                                                                                                                                 | no       | `true`  | `passkeys: false`                                      |
-| `fields`               | list of mappings                                                                                                                                                        | yes      | none    | See the following rows.                                |
-| `fields[].key`         | string                                                                                                                                                                  | yes      | none    | `key: name`                                            |
-| `fields[].label`       | string                                                                                                                                                                  | yes      | none    | `label: Name`                                          |
-| `fields[].type`        | one of `text`, `longtext`, `list`, `year`, `url`, `email`, `checkbox`                                                                                                   | yes      | none    | `type: text`                                           |
-| `fields[].visibility`  | one of `members`, `private`                                                                                                                                             | yes      | none    | `visibility: private`                                  |
-| `fields[].role`        | one of `name`, `givenName`, `familyName`, `email`, `handle`, `bio`, `tenureStart`, `tenureEnd`, `affiliation`, `affiliationOther`, `publicProfile`, `avatar`, `retired` | no       | none    | `role: name`                                           |
-| `fields[].column`      | one of `email`, `name`, `city`, `linkedin`                                                                                                                              | no       | none    | `column: name`                                         |
-| `fields[].placeholder` | string                                                                                                                                                                  | no       | none    | `placeholder: e.g. Lisbon`                             |
-| `fields[].options`     | one of `countries`, `cities`, `years`, `sizes`, `dialingCodes`                                                                                                          | no       | none    | `options: countries`                                   |
-| `fields[].required`    | boolean                                                                                                                                                                 | no       | none    | `required: true`                                       |
-| `fields[].filter`      | one of `exact`                                                                                                                                                          | no       | none    | `filter: exact`                                        |
+| Key                          | Type                                                                                                                                                                    | Required | Default | Example                                                |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | ------- | ------------------------------------------------------ |
+| `schema`                     | integer (1)                                                                                                                                                             | yes      | none    | `schema: 1`                                            |
+| `id`                         | string                                                                                                                                                                  | yes      | none    | `id: default`                                          |
+| `site`                       | mapping                                                                                                                                                                 | yes      | none    | See the following rows.                                |
+| `site.domain`                | string                                                                                                                                                                  | yes      | none    | `domain: example.org`                                  |
+| `site.legal_name`            | string                                                                                                                                                                  | yes      | none    | `legal_name: Example Community`                        |
+| `site.name`                  | string                                                                                                                                                                  | yes      | none    | `name: Example Community`                              |
+| `site.default_group`         | string                                                                                                                                                                  | yes      | none    | `default_group: example`                               |
+| `mail`                       | mapping                                                                                                                                                                 | yes      | none    | See the following rows.                                |
+| `mail.from_name`             | string                                                                                                                                                                  | yes      | none    | `from_name: Example Community`                         |
+| `mail.sign_in_subject`       | string                                                                                                                                                                  | yes      | none    | `sign_in_subject: Your Example Community sign-in link` |
+| `mail.signature`             | string                                                                                                                                                                  | yes      | none    | `signature: Example Community`                         |
+| `mail.credit`                | mapping                                                                                                                                                                 | no       | none    | See the following rows.                                |
+| `mail.credit.name`           | string                                                                                                                                                                  | yes      | none    | `name: Sign Co`                                        |
+| `mail.credit.url`            | string                                                                                                                                                                  | yes      | none    | `url: https://sign.example.net/`                       |
+| `brand`                      | mapping                                                                                                                                                                 | yes      | none    | See the following rows.                                |
+| `brand.wordmark`             | string                                                                                                                                                                  | yes      | none    | `wordmark: imgs/wordmark.svg`                          |
+| `brand.mark`                 | string                                                                                                                                                                  | yes      | none    | `mark: imgs/mark.svg`                                  |
+| `brand.email_logo`           | string                                                                                                                                                                  | yes      | none    | `email_logo: email/shared/logo.png`                    |
+| `analytics`                  | mapping                                                                                                                                                                 | no       | none    | See the following rows.                                |
+| `analytics.provider`         | one of `fathom`                                                                                                                                                         | yes      | none    | `provider: fathom`                                     |
+| `analytics.site`             | string                                                                                                                                                                  | yes      | none    | `site: ABCDEFGH`                                       |
+| `auth`                       | mapping                                                                                                                                                                 | no       | none    | See the following rows.                                |
+| `auth.passkeys`              | boolean                                                                                                                                                                 | no       | `true`  | `passkeys: false`                                      |
+| `fields`                     | list of mappings                                                                                                                                                        | yes      | none    | See the following rows.                                |
+| `fields[].key`               | string                                                                                                                                                                  | yes      | none    | `key: name`                                            |
+| `fields[].label`             | string                                                                                                                                                                  | yes      | none    | `label: Name`                                          |
+| `fields[].type`              | one of `text`, `longtext`, `list`, `year`, `url`, `email`, `checkbox`, `links`                                                                                          | yes      | none    | `type: text`                                           |
+| `fields[].visibility`        | one of `members`, `private`                                                                                                                                             | yes      | none    | `visibility: private`                                  |
+| `fields[].role`              | one of `name`, `givenName`, `familyName`, `email`, `handle`, `bio`, `tenureStart`, `tenureEnd`, `affiliation`, `affiliationOther`, `publicProfile`, `avatar`, `retired` | no       | none    | `role: name`                                           |
+| `fields[].column`            | one of `email`, `name`, `city`                                                                                                                                          | no       | none    | `column: name`                                         |
+| `fields[].placeholder`       | string                                                                                                                                                                  | no       | none    | `placeholder: e.g. Lisbon`                             |
+| `fields[].options`           | one of `countries`, `cities`, `years`, `sizes`, `dialingCodes`                                                                                                          | no       | none    | `options: countries`                                   |
+| `fields[].required`          | boolean                                                                                                                                                                 | no       | none    | `required: true`                                       |
+| `fields[].filter`            | one of `exact`                                                                                                                                                          | no       | none    | `filter: exact`                                        |
+| `fields[].sites`             | list of strings                                                                                                                                                         | no       | none    | `sites: [linkedin, github]`                            |
+| `fields[].custom`            | list of mappings                                                                                                                                                        | no       | none    | see [Links](#links)                                    |
+| `fields[].custom[].id`       | string                                                                                                                                                                  | yes      | none    | `id: codeberg`                                         |
+| `fields[].custom[].label`    | string                                                                                                                                                                  | yes      | none    | `label: Codeberg`                                      |
+| `fields[].custom[].icon`     | string                                                                                                                                                                  | yes      | none    | `icon: icons/codeberg.svg`                             |
+| `fields[].custom[].url`      | string                                                                                                                                                                  | yes      | none    | `url: https://codeberg.org/{handle}`                   |
+| `fields[].custom[].wikidata` | string                                                                                                                                                                  | no       | none    | `wikidata: P12045`                                     |
 
 <!-- skin-keys:end -->
 
@@ -273,7 +280,7 @@ Every skin's `static` must also hold `favicon.ico` and `apple-touch-icon.png`, w
 
 - **`key`** is the stable name the value is stored under: letters and digits, starting with a lowercase letter. Renaming a key does not move stored data; that takes a migration.
 - **`label`** is the form label and the CSV column header. No two fields share a key or a label.
-- **`type`** picks the control: `longtext` and `list` render a multi-line box, `checkbox` a checkbox, and every other type a single-line input.
+- **`type`** picks the control: `longtext` and `list` render a multi-line box, `checkbox` a checkbox, `links` a row per link (see [Links](#links)), and every other type a single-line input.
 - **`role`** is how the platform finds a field without knowing its key.
 - **`column`** copies the field into a typed column of the member row, used for sorting and search. Fields that share a column are joined with a space, in list order.
 - **`placeholder`** is the hint shown in an empty form control. On the field with the role `affiliationOther` it is also the hint in the membership request form's "Other" box.
@@ -303,7 +310,7 @@ A field with `filter: exact` answers "who holds this value in this field", where
 
 On a profile, the value of a filtered field links to `/members?<key>=<value>`. A field with `options: cities` also carries the value of the `options: countries` field when that field filters and the profile has one, so `?city=Portland&country=United%20States` does not merge two cities that share a name.
 
-The loader refuses `filter` on a field whose `visibility` is `private`, because the result count would read the hidden value back out, and on a `longtext`, `list`, `url`, `email` or `checkbox` field, which the profile shows as no single value. Core names no field key: which fields filter is this key and nothing else.
+The loader refuses `filter` on a field whose `visibility` is `private`, because the result count would read the hidden value back out, and on a `longtext`, `list`, `url`, `email`, `checkbox` or `links` field, which the profile shows as no single value. Core names no field key: which fields filter is this key and nothing else.
 
 ```yaml
 fields:
@@ -315,7 +322,82 @@ fields:
     filter: exact
 ```
 
-`required` is enforced by the browser on the profile edit form only. The server accepts an empty value for a required field, and the membership request form has its own fixed rules: it requires the name (the given name where the name is in two parts) and the `column: linkedin` field.
+`required` is enforced by the browser on the profile edit form. The server accepts an empty value for a required field there.
+The membership request form follows the same flag and nothing else, in the browser and on the server: it refuses a blank name control whose field is marked `required`, and a `links` field marked `required` with no link.
+It never requires an affiliation, since a `checkbox` field takes no `required` key.
+
+### Links
+
+A field with `type: links` holds a member's links to their profiles on other sites, at most one per site.
+The member enters a handle (`ravinald`), or pastes a profile address, and the server stores the handle.
+The address is built from the site's definition each time the profile renders, so a site that changes its URL form is a change to core and no stored value moves.
+
+- **`sites`** lists core's sites the field offers, by id, in the order the menu shows them.
+- **`custom`** adds sites of the skin's own, after `sites`:
+  - `id`: a lowercase slug, unique in the field and not one of core's ids.
+  - `label`: the name the menu, the profile and error messages show.
+  - `icon`: an `.svg` or `.png` under the skin's `static/`, shown beside the label.
+  - `url`: the profile address, with `{handle}` where the handle goes.
+  - `wikidata` (optional): the Wikidata identifier property for the handle, for the reader.
+
+Core reads and builds every address except Mastodon's and the website's with [`social-links`](https://github.com/gkucmierz/social-links) 1.16.0 (MIT), which matches a value against each site's address patterns and a bare id, and renders the id it extracted as the site's canonical address.
+A custom site becomes one more `social-links` profile: its `url` with every regular-expression character escaped, the `https://` and a leading `www.` optional, a trailing slash allowed, and a query allowed after it; and the bare id, with the fixed prefix before `{handle}` optional.
+Its links render as the `url` with the handle in place of `{handle}`.
+
+A `url` starts with `https://`, names one fixed, lowercase, dotted host with no port or credentials, and holds `{handle}` exactly once, ending a path segment.
+The segment may open with a fixed prefix, which must hold a character no handle can, as YouTube's `@` does: `https://youtube.com/@{handle}`.
+The rest of the address is fixed text that URL parsing reads as written: no query, fragment, percent-escape, space or dot segment.
+
+The loader refuses a `links` field with no site, an id core does not define, an id used twice, a custom id equal to one of core's, a custom `url` that breaks the rule above, a custom icon with no file under `static/`, `options` or `filter` on a `links` field, and `sites` or `custom` on any other type.
+
+A value is trimmed once, where it enters: the profile edit form, the request form and the CSV import.
+It is then either a profile address on the site's host, with or without `https://` or `http://` and `www.`, a trailing slash and a query, or the bare handle; the handle is what `social-links` extracts from it.
+Host and path are compared as written, so an address in capitals or with a fragment is refused; so is any address whose canonical form is not the one the handle renders as, such as a LinkedIn company page or a mobile-only host.
+`social-links` admits letters, digits, `_`, `-`, `.`, `%` and any non-ASCII character in a handle; core also refuses whitespace, control characters, lone surrogates, U+FFFE and U+FFFF, a handle made only of dots, and one over 100 characters.
+A refused value is reported with the site's name and the form it expects, for example `LinkedIn: the part after linkedin.com/in/`.
+A stored handle is never normalized again: on a save, an approval, an import or a render it is the same text, and reducing it again returns it unchanged.
+
+Core's sites:
+
+| Id          | Label     | Value                                         | Address                             | Wikidata |
+| ----------- | --------- | --------------------------------------------- | ----------------------------------- | -------- |
+| `linkedin`  | LinkedIn  | the part after `linkedin.com/in/`             | `https://linkedin.com/in/{handle}`  | P6634    |
+| `github`    | GitHub    | the username                                  | `https://github.com/{handle}`       | P2037    |
+| `gitlab`    | GitLab    | the username                                  | `https://gitlab.com/{handle}`       | P8827    |
+| `mastodon`  | Mastodon  | `@user@instance` or `user@instance`           | `https://{instance}/@{user}`        | P4033    |
+| `bluesky`   | Bluesky   | the handle, such as `name.bsky.social`        | `https://bsky.app/profile/{handle}` | P12361   |
+| `instagram` | Instagram | the username, with or without `@`             | `https://instagram.com/{handle}`    | P2003    |
+| `x`         | X         | the username; `twitter.com` addresses as well | `https://x.com/{handle}`            | P2002    |
+| `youtube`   | YouTube   | the handle, with or without `@`               | `https://youtube.com/@{handle}`     | P11245   |
+| `website`   | Website   | one `https://` address                        | the stored address                  | P856     |
+
+LinkedIn, GitHub, Instagram and X use the profiles `social-links` ships.
+GitLab, Bluesky and YouTube are profiles core adds, YouTube's because the shipped one also reads `/channel/` and `/user/` addresses and would link their ids as `@` handles.
+No site's handle is case-folded: it is stored as the member wrote it.
+Mastodon and the website are the two sites core reads in its own code.
+Mastodon takes `@user@instance` or `user@instance` on any instance, holds `user` to letters, digits, `_`, `.` and `-` (starting and ending with a letter, digit or `_`) and `instance` to a dotted host name of letters, digits and hyphens per label, lowercased, stores `user@instance` and links it as `https://instance/@user`.
+The website is not a username: it holds one address under the rules a bio link follows (`https://` assumed where no scheme is named, parsed with `new URL()`, `https:` only, a dot in its host name, no credentials, at most 2048 characters), stored as the parsed address.
+Core's icons are Font Awesome Free glyphs (see `THIRD_PARTY_NOTICES.md`); the website's is the solid `globe`.
+
+The member's links are stored in the profile data under the field's key as an ordered list of `{"site": …, "handle": …}`, never as URLs.
+An entry whose site the skin stops offering is not shown, and the member's own saves keep it, since the form never shows it to edit.
+A request approval or a CSV import naming a site the field does not offer is refused.
+Search matches the handles and nothing else.
+
+```yaml
+fields:
+  - key: links
+    label: Links
+    type: links
+    visibility: members
+    sites: [linkedin, github, mastodon, bluesky, website]
+    custom:
+      - id: codeberg
+        label: Codeberg
+        icon: icons/codeberg.svg
+        url: https://codeberg.org/{handle}
+        wikidata: P12045
+```
 
 ### Roles
 
@@ -355,23 +437,24 @@ fields:
 
 ### Shipped field sets
 
-`skin/default` has five fields: `name`, `country`, `city`, `bio`, and one private field, `phone`. `country` and `city` offer the `countries` and `cities` lists, and `country` is the one required field.
+`skin/default` has six fields: `name`, `country`, `city`, `bio`, one private field, `phone`, and `links`, which offers LinkedIn, GitHub, Mastodon, Bluesky, a website and, as an example of a skin's own site, Codeberg. `country` and `city` offer the `countries` and `cities` lists, and `country` is the one required field.
 
 ### Form controls
 
 The request and profile edit forms post some values under fixed control names. Each fixed control is bound to its field by role, so the value is stored under whatever key the skin gives that field. Where the skin lists a field decides only where its control is shown and, for the name parts, the order they join into the display name.
 
-The membership request form has only fixed controls:
+The membership request form has fixed controls, and shows each `links` field as the profile edit form does:
 
-| Control                | Shown when the skin has                  | Stored under               |
-| ---------------------- | ---------------------------------------- | -------------------------- |
-| `name`                 | a `name` field                           | that field's key           |
-| `firstName`            | a `givenName` field                      | that field's key           |
-| `lastName`             | a `familyName` field                     | that field's key           |
-| `linkedin`             | a field with `column: linkedin`          | the first such field's key |
-| `aff_` and a field key | fields with the role `affiliation`       | each field's key           |
-| `otherAffiliations`    | a field with the role `affiliationOther` | that field's key           |
-| `publicProfile`        | a field with the role `publicProfile`    | that field's key           |
+| Control                | Shown when the skin has                  | Stored under     |
+| ---------------------- | ---------------------------------------- | ---------------- |
+| `name`                 | a `name` field                           | that field's key |
+| `firstName`            | a `givenName` field                      | that field's key |
+| `lastName`             | a `familyName` field                     | that field's key |
+| `aff_` and a field key | fields with the role `affiliation`       | each field's key |
+| `otherAffiliations`    | a field with the role `affiliationOther` | that field's key |
+| `publicProfile`        | a field with the role `publicProfile`    | that field's key |
+
+A `links` field posts `<key>:site` and `<key>:handle` once per row, in order, and `<key>:links` always, so a form that removed every row still names the field. A row with no value is dropped. Without JavaScript the form shows a native select per row and one blank row to add a link; emptying a row's value removes it.
 
 The profile edit form posts each editable text field under its own key (the `bio` field is set apart at the top of the form, still under its key), and the `aff_`, `otherAffiliations`, and `publicProfile` controls as above. Because a text field posts under its key, the loader refuses a skin where a field is keyed `otherAffiliations` or `publicProfile` while a different field holds the matching role: the form would post two values under one name.
 
@@ -386,6 +469,6 @@ That test failing is the definition of a breaking change. A breaking change ship
 - The red of form errors is fixed in platform markup, not a theme property.
 - The dark gray submit buttons on profile edit, the request form and the admin access, requests and audit pages are fixed in platform markup and do not follow the accent.
 - The loader does not check that an `@font-face` source names a file the skin ships. A missing one loads no face, and the page falls back to the next family in the stack.
-- The request form's labels ("First name", "Last name", "LinkedIn URL") are fixed text and do not follow the skin's field labels.
+- The request form's labels ("First name", "Last name") are fixed text and do not follow the skin's field labels.
 - The option lists are built into core. A skin can't define a list of its own.
-- `required` isn't checked by the server. See [Option lists](#option-lists).
+- `required` isn't checked by the server on a profile save, only on the membership request form. See [Option lists](#option-lists).

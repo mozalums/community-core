@@ -12,33 +12,39 @@ const SAMPLE_MEMBERS = [
 		email: 'ada@example.org',
 		name: 'Ada Example',
 		city: 'San Francisco',
-		linkedin: 'https://www.linkedin.com/in/example-ada'
+		links: [{ site: 'linkedin', handle: 'example-ada' }]
 	},
 	{
 		email: 'bruno@example.org',
 		name: 'Bruno Sample',
 		city: 'Berlin',
-		linkedin: 'https://www.linkedin.com/in/example-bruno'
+		links: [{ site: 'linkedin', handle: 'example-bruno' }]
 	},
 	{
 		email: 'chen@example.org',
 		name: 'Chen Placeholder',
 		city: 'Toronto',
-		linkedin: 'https://www.linkedin.com/in/example-chen'
+		links: [{ site: 'linkedin', handle: 'example-chen' }]
 	},
 	{
 		email: 'dara@example.org',
 		name: 'Dara Fixture',
 		city: 'San Francisco',
-		linkedin: 'https://www.linkedin.com/in/example-dara'
+		links: [{ site: 'linkedin', handle: 'example-dara' }]
 	},
 	{
 		email: 'eli@example.org',
 		name: 'Eli Testcase',
 		city: 'Boston',
-		linkedin: 'https://www.linkedin.com/in/example-eli'
+		links: [{ site: 'linkedin', handle: 'example-eli' }]
 	}
 ];
+
+// Under the skin's links field, when it has one.
+function linksData(links: { site: string; handle: string }[]): Record<string, unknown> {
+	const field = currentSkin().skin.fields.find((f) => f.type === 'links');
+	return field ? { [field.key]: links } : {};
+}
 
 async function main() {
 	await migrateGated(pool, process.env.LOREM_WRITERS_STOPPED);
@@ -62,12 +68,12 @@ async function main() {
 
 	for (const m of SAMPLE_MEMBERS) {
 		await pool.query(
-			`INSERT INTO member (group_id, email, name, city, linkedin)
-			   VALUES ($1, $2, $3, $4, $5)
+			`INSERT INTO member (group_id, email, name, city, data)
+			   VALUES ($1, $2, $3, $4, $5::jsonb)
 			 ON CONFLICT (group_id, email) DO UPDATE
 			   SET name = EXCLUDED.name, city = EXCLUDED.city,
-			       linkedin = EXCLUDED.linkedin, status = 'active'`,
-			[groupId, m.email, m.name, m.city, m.linkedin]
+			       data = member.data || EXCLUDED.data, status = 'active'`,
+			[groupId, m.email, m.name, m.city, JSON.stringify(linksData(m.links))]
 		);
 	}
 	console.log(`members upserted: ${SAMPLE_MEMBERS.length}`);

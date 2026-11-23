@@ -58,15 +58,13 @@ export function fieldsFor(
 	const extra = [...new Set(keys)]
 		.filter((k) => isUnmappedKey(k) && !known.has(k))
 		.sort()
-		.map(
-			(key, i): FieldDef => ({
-				key,
-				label: key.slice(UNMAPPED_PREFIX.length),
-				type: 'text',
-				visibility: 'private',
-				order: UNMAPPED_ORDER + i
-			})
-		);
+		.map((key, i): FieldDef => ({
+			key,
+			label: key.slice(UNMAPPED_PREFIX.length),
+			type: 'text',
+			visibility: 'private',
+			order: UNMAPPED_ORDER + i
+		}));
 	return [...schema, ...extra].sort((a, b) => a.order - b.order);
 }
 
@@ -190,15 +188,14 @@ export function promotedColumns(
 	return {
 		email: join('email'),
 		name: join('name'),
-		city: join('city'),
-		linkedin: join('linkedin')
+		city: join('city')
 	};
 }
 
 // Where an exact filter reads a field's value: the promoted city column for the
 // field that alone feeds it, and `data` at the field's own key for every other
 // field. City is the one exception because the directory has always matched
-// places on that column; a field feeding name, email or linkedin is still
+// places on that column; a field feeding name or email is still
 // compared on its stored value, so a promoted column never answers for a key.
 export function filterColumn(
 	f: FieldDef,

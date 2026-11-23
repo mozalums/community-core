@@ -17,7 +17,6 @@ const MEMBER = {
 	identSubject: null,
 	name: 'Ada Byron',
 	city: 'London',
-	linkedin: 'https://example.org/ada',
 	status: 'active',
 	data: {
 		givenName: 'Ada',

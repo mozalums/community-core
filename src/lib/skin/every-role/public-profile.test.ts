@@ -116,7 +116,6 @@ const member = () => db.members.find((m) => m.email === EMAIL);
 const FILLED = {
 	firstName: 'Nomi',
 	lastName: 'Vance',
-	linkedin: 'https://example.org/nomi',
 	aff_volunteer: 'on'
 };
 
@@ -149,9 +148,14 @@ test('ticking the box on the request form publishes the member', async () => {
 test('a rejected submit hands the choice back rather than dropping it', async () => {
 	db.reset();
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	const res = (await submit({ ...FILLED, linkedin: '', publicProfile: 'on' })) as any;
+	const res = (await submit({
+		...FILLED,
+		'profiles:site': 'linkedin',
+		'profiles:handle': 'https://example.org/nomi',
+		publicProfile: 'on'
+	})) as any;
 	assert.equal(res.status, 400);
-	assert.equal(res.data.error, 'LinkedIn URL is required.');
+	assert.equal(res.data.error, 'LinkedIn: the part after linkedin.com/in/');
 	assert.equal(res.data.publicProfile, true);
 	assert.equal(db.requests.length, 0);
 });
